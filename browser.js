@@ -1,1 +1,1 @@
-export * from '@napi-rs/package-template-pnpm-wasm32-wasi'
+export * from 'miniprogram-template-parser-wasm32-wasi'

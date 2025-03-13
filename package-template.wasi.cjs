@@ -39,9 +39,9 @@ if (__nodeFs.existsSync(__wasmDebugFilePath)) {
   __wasmFilePath = __wasmDebugFilePath
 } else if (!__nodeFs.existsSync(__wasmFilePath)) {
   try {
-    __wasmFilePath = __nodePath.resolve('@napi-rs/package-template-pnpm-wasm32-wasi')
+    __wasmFilePath = __nodePath.resolve('miniprogram-template-parser-wasm32-wasi')
   } catch {
-    throw new Error('Cannot find package-template.wasm32-wasi.wasm file, and @napi-rs/package-template-pnpm-wasm32-wasi package is not installed.')
+    throw new Error('Cannot find package-template.wasm32-wasi.wasm file, and miniprogram-template-parser-wasm32-wasi package is not installed.')
   }
 }
 
@@ -77,11 +77,12 @@ const { instance: __napiInstance, module: __wasiModule, napiModule: __napiModule
     return importObject
   },
   beforeInit({ instance }) {
-    __napi_rs_initialize_modules(instance)
-  }
+    for (const name of Object.keys(instance.exports)) {
+      if (name.startsWith('__napi_register__')) {
+        instance.exports[name]()
+      }
+    }
+  },
 })
 
-function __napi_rs_initialize_modules(__napiInstance) {
-  __napiInstance.exports['__napi_register__plus_100_0']?.()
-}
 module.exports.plus100 = __napiModule.exports.plus100
