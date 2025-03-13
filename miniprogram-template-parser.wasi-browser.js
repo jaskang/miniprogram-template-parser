@@ -5,7 +5,7 @@ import {
   createOnMessage as __wasmCreateOnMessageForFsProxy,
 } from '@napi-rs/wasm-runtime'
 
-import __wasmUrl from './package-template.wasm32-wasi.wasm?url'
+import __wasmUrl from './miniprogram-template-parser.wasm32-wasi.wasm?url'
 
 const __wasi = new __WASI({
   version: 'preview1',

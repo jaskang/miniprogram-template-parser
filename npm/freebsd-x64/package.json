@@ -4,9 +4,9 @@
   "cpu": [
     "x64"
   ],
-  "main": "package-template.freebsd-x64.node",
+  "main": "miniprogram-template-parser.freebsd-x64.node",
   "files": [
-    "package-template.freebsd-x64.node"
+    "miniprogram-template-parser.freebsd-x64.node"
   ],
   "description": "Template project for writing node package with napi-rs",
   "keywords": [

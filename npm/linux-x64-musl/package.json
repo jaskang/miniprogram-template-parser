@@ -4,9 +4,9 @@
   "cpu": [
     "x64"
   ],
-  "main": "package-template.linux-x64-musl.node",
+  "main": "miniprogram-template-parser.linux-x64-musl.node",
   "files": [
-    "package-template.linux-x64-musl.node"
+    "miniprogram-template-parser.linux-x64-musl.node"
   ],
   "description": "Template project for writing node package with napi-rs",
   "keywords": [

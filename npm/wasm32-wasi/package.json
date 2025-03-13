@@ -4,11 +4,11 @@
   "cpu": [
     "wasm32"
   ],
-  "main": "package-template.wasi.cjs",
+  "main": "miniprogram-template-parser.wasi.cjs",
   "files": [
-    "package-template.wasm32-wasi.wasm",
-    "package-template.wasi.cjs",
-    "package-template.wasi-browser.js",
+    "miniprogram-template-parser.wasm32-wasi.wasm",
+    "miniprogram-template-parser.wasi.cjs",
+    "miniprogram-template-parser.wasi-browser.js",
     "wasi-worker.mjs",
     "wasi-worker-browser.mjs"
   ],
@@ -33,7 +33,7 @@
     "url": "git+ssh://git@github.com/napi-rs/package-template-pnpm.git",
     "type": "git"
   },
-  "browser": "package-template.wasi-browser.js",
+  "browser": "miniprogram-template-parser.wasi-browser.js",
   "dependencies": {
     "@napi-rs/wasm-runtime": "^0.2.7"
   }

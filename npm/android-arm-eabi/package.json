@@ -4,9 +4,9 @@
   "cpu": [
     "arm"
   ],
-  "main": "package-template.android-arm-eabi.node",
+  "main": "miniprogram-template-parser.android-arm-eabi.node",
   "files": [
-    "package-template.android-arm-eabi.node"
+    "miniprogram-template-parser.android-arm-eabi.node"
   ],
   "description": "Template project for writing node package with napi-rs",
   "keywords": [
