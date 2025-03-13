@@ -53,4 +53,4 @@ const {
     }
   },
 })
-export const plus100 = __napiModule.exports.plus100
+export const parse = __napiModule.exports.parse

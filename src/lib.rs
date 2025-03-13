@@ -1,8 +1,15 @@
 #![deny(clippy::all)]
 
+mod ast;
+mod error;
+mod parser;
+mod state;
+mod utils;
+
 use napi_derive::napi;
 
 #[napi]
-pub fn plus_100(input: u32) -> u32 {
-  input + 100
+pub fn parse(input: String) -> String {
+  let result = parser::parse(&input);
+  parser::ast_to_json(&result.ast)
 }
