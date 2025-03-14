@@ -7,7 +7,7 @@ use crate::error::ParseError;
 pub struct ParseState<'a> {
   pub source: &'a str,
   pub chars: Vec<char>,
-  pub position: usize,
+  pub offset: usize,
   pub line: u32,
   pub column: u32,
   pub errors: Vec<ParseError>,
@@ -19,7 +19,7 @@ impl<'a> ParseState<'a> {
     Self {
       source,
       chars: source.chars().collect(),
-      position: 0,
+      offset: 0,
       line: 1,
       column: 1,
       errors: Vec::new(),
@@ -46,26 +46,26 @@ impl<'a> ParseState<'a> {
 
   /// 设置当前位置（用于回溯）
   pub fn set_position(&mut self, position: usize, line: u32, column: u32) {
-    self.position = position;
+    self.offset = position;
     self.line = line;
     self.column = column;
   }
 
   /// 保存当前状态（用于回溯）
   pub fn save_state(&self) -> (usize, u32, u32) {
-    (self.position, self.line, self.column)
+    (self.offset, self.line, self.column)
   }
 
   /// 恢复状态（用于回溯）
   pub fn restore_state(&mut self, state: (usize, u32, u32)) {
-    self.position = state.0;
+    self.offset = state.0;
     self.line = state.1;
     self.column = state.2;
   }
 
   /// 检查是否已经到达源码结尾
   pub fn is_eof(&self) -> bool {
-    self.position >= self.chars.len()
+    self.offset >= self.chars.len()
   }
 
   /// 查看当前字符但不消费
@@ -73,7 +73,7 @@ impl<'a> ParseState<'a> {
     if self.is_eof() {
       None
     } else {
-      Some(self.chars[self.position])
+      Some(self.chars[self.offset])
     }
   }
 
@@ -83,8 +83,8 @@ impl<'a> ParseState<'a> {
       return String::new();
     }
 
-    let end = (self.position + n).min(self.chars.len());
-    self.chars[self.position..end].iter().collect()
+    let end = (self.offset + n).min(self.chars.len());
+    self.chars[self.offset..end].iter().collect()
   }
 
   /// 查看接下来的字符是否匹配给定的字符串
@@ -98,8 +98,8 @@ impl<'a> ParseState<'a> {
       return None;
     }
 
-    let c = self.chars[self.position];
-    self.position += 1;
+    let c = self.chars[self.offset];
+    self.offset += 1;
 
     // 更新行列信息
     if c == '\n' {
@@ -115,7 +115,7 @@ impl<'a> ParseState<'a> {
   /// 消费指定数量的字符
   pub fn consume_n(&mut self, n: usize) -> String {
     let mut result = String::new();
-    let count = n.min(self.chars.len() - self.position);
+    let count = n.min(self.chars.len() - self.offset);
 
     for _ in 0..count {
       if let Some(c) = self.consume() {
@@ -131,7 +131,7 @@ impl<'a> ParseState<'a> {
   where
     F: Fn(char) -> bool,
   {
-    let start_pos = self.position;
+    let start_pos = self.offset;
     let mut end_pos = start_pos;
 
     while end_pos < self.chars.len() && predicate(self.chars[end_pos]) {
@@ -147,7 +147,7 @@ impl<'a> ParseState<'a> {
 
     // 更新位置和行列信息
     for c in &self.chars[start_pos..end_pos] {
-      self.position += 1;
+      self.offset += 1;
       if *c == '\n' {
         self.line += 1;
         self.column = 1;
@@ -175,8 +175,8 @@ impl<'a> ParseState<'a> {
     }
 
     while !self.is_eof() {
-      if self.position + target_len <= self.chars.len() {
-        let window = &self.chars[self.position..self.position + target_len];
+      if self.offset + target_len <= self.chars.len() {
+        let window = &self.chars[self.offset..self.offset + target_len];
         if window == target_chars.as_slice() {
           break;
         }

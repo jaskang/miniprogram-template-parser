@@ -2,7 +2,7 @@
 
 use serde_json;
 
-use crate::ast::{Attribute, AttributeValue, ExpressionPart, Location, Node, Position};
+use crate::ast::{Attribute, AttributeValue, Location, Node, Position};
 use crate::error::ParseError;
 use crate::state::ParseState;
 
