@@ -17,9 +17,9 @@ const wxmlContent = `<view class="container" bindtap="{{handleTap}}">
   <text wx:if="{{show}}">{{m1.foo()}}</text> 
 </view>`;
 const start = Date.now();
-for (let i = 0; i < 1000; i++) {
-  parse(wxmlContent)
-  // console.log(parse(wxmlContent));
-}
+// for (let i = 0; i < 1000; i++) {
+  // parse(wxmlContent)
+  console.log(parse(wxmlContent));
+// }
 const end = Date.now();
 console.log(`Time taken: ${end - start}ms`);
