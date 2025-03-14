@@ -4,7 +4,6 @@ mod ast;
 mod error;
 mod parser;
 mod state;
-mod utils;
 
 use napi_derive::napi;
 

@@ -1,7 +1,6 @@
 //! 抽象语法树(AST)相关的数据结构
 
 use serde::{Deserialize, Serialize};
-use serde_json::Number;
 use std::fmt;
 use std::ops::Range;
 
@@ -9,9 +8,9 @@ use std::ops::Range;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Position {
   /// 行号，从1开始
-  pub line: u32,
+  pub line: usize,
   /// 列号，从1开始
-  pub column: u32,
+  pub column: usize,
 }
 
 impl fmt::Display for Position {
@@ -41,11 +40,14 @@ impl From<Range<Position>> for Location {
 /// 属性节点，表示元素上的属性
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attribute {
-  /// 属性名
+  // 属性名
   pub name: String,
-  /// 属性值，可能为空（如布尔属性）
+  // 属性值，可能为空（如布尔属性）
+  // 静态值（纯字符串），如 class="container" value 为 [Static]
+  // 动态值（包含表达式），如 class="{{index}}" value 为 [Expression]
+  // 多个值，如 class="container {{index}} {{name}}" value 为 [Static, Expression, Expression, Static]
   pub value: Vec<AttributeValue>,
-  /// 位置信息
+  // 位置信息
   pub location: Location,
 }
 
@@ -53,18 +55,16 @@ pub struct Attribute {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AttributeValue {
-  /// 静态值（纯字符串），如 class="container"
   Static {
     content: String,
-    start: Number,
-    end: Number,
+    start: usize,
+    end: usize,
     location: Location,
   },
-  /// 动态值（包含表达式），如 class="{{index}}"
   Expression {
     content: String,
-    start: Number,
-    end: Number,
+    start: usize,
+    end: usize,
     location: Location,
   },
 }
@@ -76,8 +76,8 @@ pub enum Node {
   /// 文档根节点，包含所有顶层节点
   Document {
     children: Vec<Node>,
-    start: Number,
-    end: Number,
+    start: usize,
+    end: usize,
     location: Location,
   },
   /// 元素节点，如 <view>, <button> 等
@@ -87,30 +87,30 @@ pub enum Node {
     children: Vec<Node>,
     is_self_closing: bool,
     content: String,
-    start: Number,
-    end: Number,
+    start: usize,
+    end: usize,
     location: Location,
   },
   Text {
     content: String,
-    start: Number,
-    end: Number,
+    start: usize,
+    end: usize,
     location: Location,
   },
   /// 表达式节点（双括号表达式），如 {{message}}
   Expression {
     // 表达式内容，不包含外层的双括号
     content: String,
-    start: Number,
-    end: Number,
+    start: usize,
+    end: usize,
     location: Location,
   },
   /// 注释节点，如 <!-- 注释 -->
   Comment {
     // 注释内容，不包含 <!-- 和 -->
     content: String,
-    start: Number,
-    end: Number,
+    start: usize,
+    end: usize,
     location: Location,
   },
 }

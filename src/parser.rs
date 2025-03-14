@@ -18,7 +18,8 @@ pub struct ParserResult {
 /// 主解析函数，解析WXML字符串并生成AST
 pub fn parse(source: &str) -> ParserResult {
   let mut state = ParseState::new(source);
-  let start_pos = state.get_position();
+  let start_pos = state.position();
+  let start_offset = state.offset;
 
   // 解析文档
   let document = parse_document(&mut state);
@@ -26,9 +27,11 @@ pub fn parse(source: &str) -> ParserResult {
   // 创建文档节点
   let ast = Node::Document {
     children: document,
+    start: start_offset,
+    end: state.offset,
     location: Location {
       start: start_pos,
-      end: state.get_position(),
+      end: state.position(),
     },
   };
 
@@ -72,7 +75,8 @@ fn parse_next_node(state: &mut ParseState) -> Node {
     // 查看是否是结束标签
     if state.peek_str("</") {
       // 这里可能是无效的关闭标签，跳过它
-      let pos = state.get_position();
+      let pos = state.position();
+      let start_offset = state.offset;
       state.consume_while(|c| c != '>');
       if state.peek() == Some('>') {
         state.consume(); // 消费 '>'
@@ -80,9 +84,11 @@ fn parse_next_node(state: &mut ParseState) -> Node {
       // 返回空文本节点表示跳过的内容
       Node::Text {
         content: String::new(),
+        start: start_offset,
+        end: state.offset,
         location: Location {
           start: pos,
-          end: state.get_position(),
+          end: state.position(),
         },
       }
     } else {
@@ -101,13 +107,14 @@ fn parse_next_node(state: &mut ParseState) -> Node {
 
 /// 解析元素节点
 fn parse_element(state: &mut ParseState) -> Node {
-  let start_pos = state.get_position();
+  let start_pos = state.position();
+  let start_offset = state.offset;
 
   // 消费开始的 '<'
   state.consume();
 
   // 解析标签名
-  let tag_name = state.consume_while(|c| !c.is_whitespace() && c != '>' && c != '/');
+  let name = state.consume_while(|c| !c.is_whitespace() && c != '>' && c != '/');
 
   state.skip_whitespace();
 
@@ -128,41 +135,55 @@ fn parse_element(state: &mut ParseState) -> Node {
   } else {
     // 标签未正确关闭，记录错误
     state.record_error(ParseError::GeneralError {
-      message: format!("未正确关闭的标签: <{}", tag_name),
+      message: format!("未正确关闭的标签: <{}", name),
       position: start_pos,
     });
   }
 
+  // 捕获原始内容
+  let content = state.get_content(start_offset, state.offset);
+
   // 特殊处理 wxs 标签
-  if tag_name.to_lowercase() == "wxs" && !is_self_closing {
-    return parse_wxs_tag(state, attributes, start_pos);
+  if name.to_lowercase() == "wxs" && !is_self_closing {
+    return parse_wxs_tag(state, attributes, start_pos, start_offset, content);
   }
 
   // 如果是自闭合标签，没有子节点
   if is_self_closing {
     return Node::Element {
-      tag_name,
+      name,
       attributes,
       children: Vec::new(),
       is_self_closing: true,
+      content,
+      start: start_offset,
+      end: state.offset,
       location: Location {
         start: start_pos,
-        end: state.get_position(),
+        end: state.position(),
       },
     };
   }
 
   // 解析子节点
-  let children = parse_element_children(state, &tag_name);
+  let children = parse_element_children(state, &name);
+  let end_offset = state.offset;
+  let end_pos = state.position();
+
+  // 更新内容以包含整个元素
+  let full_content = state.get_content(start_offset, end_offset);
 
   Node::Element {
-    tag_name,
+    name,
     attributes,
     children,
     is_self_closing: false,
+    content: full_content,
+    start: start_offset,
+    end: end_offset,
     location: Location {
       start: start_pos,
-      end: state.get_position(),
+      end: end_pos,
     },
   }
 }
@@ -177,14 +198,14 @@ fn parse_element_children(state: &mut ParseState, parent_tag_name: &str) -> Vec<
       // 文件结束但标签未关闭，记录错误
       state.record_error(ParseError::UnclosedElement {
         tag_name: parent_tag_name.to_string(),
-        position: state.get_position(),
+        position: state.position(),
       });
       break;
     }
 
     // 检查是否是结束标签
     if state.peek_str("</") {
-      let close_tag_start = state.position;
+      let close_tag_start = state.offset;
 
       // 消费 '</'
       state.consume_n(2);
@@ -209,12 +230,12 @@ fn parse_element_children(state: &mut ParseState, parent_tag_name: &str) -> Vec<
           found: close_tag_name.clone(),
           position: Position {
             line: state.line,
-            column: state.column - close_tag_name.len() as u32,
+            column: state.column - close_tag_name.len(),
           },
         });
 
         // 回溯到结束标签开始位置，将其作为文本处理
-        state.position = close_tag_start;
+        state.offset = close_tag_start;
         children.push(parse_text(state));
       }
     } else {
@@ -226,9 +247,15 @@ fn parse_element_children(state: &mut ParseState, parent_tag_name: &str) -> Vec<
 }
 
 /// 解析wxs标签
-fn parse_wxs_tag(state: &mut ParseState, attributes: Vec<Attribute>, start_pos: Position) -> Node {
+fn parse_wxs_tag(
+  state: &mut ParseState,
+  attributes: Vec<Attribute>,
+  start_pos: Position,
+  start_offset: usize,
+  tag_content: String,
+) -> Node {
   // 收集wxs标签内容直到</wxs>
-  let content = state.consume_until("</wxs");
+  let script_content = state.consume_until("</wxs");
 
   // 消费结束标签 </wxs>
   if state.peek_str("</wxs") {
@@ -240,24 +267,44 @@ fn parse_wxs_tag(state: &mut ParseState, attributes: Vec<Attribute>, start_pos: 
       // wxs标签未正确关闭，记录错误
       state.record_error(ParseError::GeneralError {
         message: "wxs标签未正确关闭".to_string(),
-        position: state.get_position(),
+        position: state.position(),
       });
     }
   }
 
-  Node::WxsScript {
-    attributes,
-    content,
+  let full_content = state.get_content(start_offset, state.offset);
+
+  // 创建一个文本节点来保存脚本内容
+  let script_node = Node::Text {
+    content: script_content,
+    start: (start_offset + tag_content.len()),
+    end: (state.offset - 6), // 减去 "</wxs>" 的长度
     location: Location {
       start: start_pos,
-      end: state.get_position(),
+      end: state.position(),
+    },
+  };
+
+  // 返回包含脚本内容的 wxs 元素节点
+  Node::Element {
+    name: "wxs".to_string(),
+    attributes,
+    children: vec![script_node],
+    is_self_closing: false,
+    content: full_content,
+    start: start_offset,
+    end: state.offset,
+    location: Location {
+      start: start_pos,
+      end: state.position(),
     },
   }
 }
 
 /// 解析文本节点
 fn parse_text(state: &mut ParseState) -> Node {
-  let start_pos = state.get_position();
+  let start_pos = state.position();
+  let start_offset = state.offset;
   let mut text_content = String::new();
 
   // 收集文本内容直到遇到 <, {{ 或文件结束
@@ -274,16 +321,19 @@ fn parse_text(state: &mut ParseState) -> Node {
 
   Node::Text {
     content: text_content,
+    start: start_offset,
+    end: state.offset,
     location: Location {
       start: start_pos,
-      end: state.get_position(),
+      end: state.position(),
     },
   }
 }
 
 /// 解析双括号表达式
 fn parse_expression(state: &mut ParseState) -> Node {
-  let start_pos = state.get_position();
+  let start_pos = state.position();
+  let start_offset = state.offset;
 
   // 消费开始的 '{{'
   state.consume_n(2);
@@ -320,16 +370,19 @@ fn parse_expression(state: &mut ParseState) -> Node {
 
   Node::Expression {
     content: expression_content.trim().to_string(),
+    start: start_offset,
+    end: state.offset,
     location: Location {
       start: start_pos,
-      end: state.get_position(),
+      end: state.position(),
     },
   }
 }
 
 /// 解析注释
 fn parse_comment(state: &mut ParseState) -> Node {
-  let start_pos = state.get_position();
+  let start_pos = state.position();
+  let start_offset = state.offset;
 
   // 消费开始的 '<!--'
   state.consume_n(4);
@@ -350,9 +403,11 @@ fn parse_comment(state: &mut ParseState) -> Node {
 
   Node::Comment {
     content: comment_content,
+    start: start_offset,
+    end: state.offset,
     location: Location {
       start: start_pos,
-      end: state.get_position(),
+      end: state.position(),
     },
   }
 }
@@ -383,7 +438,7 @@ fn parse_attributes(state: &mut ParseState) -> Vec<Attribute> {
 
 /// 解析单个属性
 fn parse_attribute(state: &mut ParseState) -> Option<Attribute> {
-  let start_pos = state.get_position();
+  let start_pos = state.position();
 
   // 解析属性名
   let name = state.consume_while(|c| !c.is_whitespace() && c != '=' && c != '>' && c != '/');
@@ -401,7 +456,7 @@ fn parse_attribute(state: &mut ParseState) -> Option<Attribute> {
 
     parse_attribute_value(state)
   } else {
-    None
+    Vec::new()
   };
 
   Some(Attribute {
@@ -409,16 +464,18 @@ fn parse_attribute(state: &mut ParseState) -> Option<Attribute> {
     value,
     location: Location {
       start: start_pos,
-      end: state.get_position(),
+      end: state.position(),
     },
   })
 }
 
 /// 解析属性值，可能是静态字符串或表达式或混合内容
-fn parse_attribute_value(state: &mut ParseState) -> Option<AttributeValue> {
+fn parse_attribute_value(state: &mut ParseState) -> Vec<AttributeValue> {
   state.skip_whitespace();
 
-  let start_pos = state.get_position();
+  let mut values = Vec::new();
+  let start_pos = state.position();
+  let start_offset = state.offset;
 
   // 检查是否是引号包裹的属性值
   let quote = if state.peek() == Some('"') || state.peek() == Some('\'') {
@@ -429,31 +486,13 @@ fn parse_attribute_value(state: &mut ParseState) -> Option<AttributeValue> {
       message: "属性值必须用引号包裹".to_string(),
       position: start_pos,
     });
-    return None;
+    return values;
   };
 
-  // 解析引号内的内容
-  let (has_expression, parts) = parse_attribute_content(state, quote, start_pos);
+  // 解析引号内的所有内容
+  parse_attribute_content(state, quote, start_pos, &mut values);
 
-  // 根据收集到的内容创建属性值
-  if !has_expression && parts.len() == 1 {
-    // 如果没有表达式且只有一个部分，则整个内容是静态的
-    if let ExpressionPart::Static { content, location } = &parts[0] {
-      return Some(AttributeValue::Static {
-        content: content.clone(),
-        location: location.clone(),
-      });
-    }
-  }
-
-  // 如果有表达式或多个部分，统一返回Expression类型
-  Some(AttributeValue::Expression {
-    parts,
-    location: Location {
-      start: start_pos,
-      end: state.get_position(),
-    },
-  })
+  values
 }
 
 /// 解析属性内容（引号内）
@@ -461,106 +500,98 @@ fn parse_attribute_content(
   state: &mut ParseState,
   quote: Option<char>,
   start_pos: Position,
-) -> (bool, Vec<ExpressionPart>) {
-  // 表达式部分的列表
-  let mut parts = Vec::new();
-  // 当前静态文本内容
+  values: &mut Vec<AttributeValue>,
+) {
+  // 当前静态内容
   let mut static_content = String::new();
-  // 是否包含表达式
-  let mut has_expression = false;
+  let mut current_start = state.offset;
 
   // 在属性值中查找表达式和静态文本
   while !state.is_eof() {
     // 如果遇到结束引号
     if state.peek() == quote {
-      state.consume(); // 消费结束的引号
-
-      // 如果有剩余的静态内容，添加到parts中
+      // 处理剩余的静态内容
       if !static_content.is_empty() {
-        parts.push(ExpressionPart::Static {
-          content: static_content.clone(),
+        values.push(AttributeValue::Static {
+          content: static_content,
+          start: current_start,
+          end: state.offset,
           location: Location {
-            start: start_pos, // 简化位置处理
-            end: state.get_position(),
+            start: start_pos, // 简化处理，使用属性开始位置
+            end: state.position(),
           },
         });
       }
 
+      state.consume(); // 消费结束的引号
       break;
     }
 
     // 如果遇到表达式开始
     if state.peek_str("{{") {
-      has_expression = true;
-
-      // 如果当前有静态内容，先添加到parts中
+      // 先处理前面积累的静态内容
       if !static_content.is_empty() {
-        parts.push(ExpressionPart::Static {
+        values.push(AttributeValue::Static {
           content: static_content,
+          start: current_start,
+          end: state.offset,
           location: Location {
-            start: start_pos, // 简化位置处理
-            end: state.get_position(),
+            start: start_pos, // 简化处理，使用属性开始位置
+            end: state.position(),
           },
         });
         static_content = String::new();
       }
 
-      // 解析表达式部分
-      let expr_part = parse_expression_part(state);
-      parts.push(expr_part);
+      // 记录表达式开始位置
+      let expr_start_pos = state.position();
+      let expr_start_offset = state.offset;
+
+      // 消费开始的 '{{'
+      state.consume_n(2);
+
+      // 解析表达式内容
+      let mut expr_content = String::new();
+      let mut brace_count = 1;
+
+      while !state.is_eof() {
+        if state.peek_str("{{") {
+          expr_content.push_str("{{");
+          state.consume_n(2);
+          brace_count += 1;
+        } else if state.peek_str("}}") {
+          brace_count -= 1;
+          if brace_count == 0 {
+            state.consume_n(2); // 消费结束的 '}}'
+            break;
+          } else {
+            expr_content.push_str("}}");
+            state.consume_n(2);
+          }
+        } else if let Some(c) = state.consume() {
+          expr_content.push(c);
+        }
+      }
+
+      // 添加表达式部分到 values
+      let full_expr = format!("{{{{{}}}}}", expr_content.trim());
+      values.push(AttributeValue::Expression {
+        content: full_expr,
+        start: expr_start_offset,
+        end: state.offset,
+        location: Location {
+          start: expr_start_pos,
+          end: state.position(),
+        },
+      });
+
+      // 重置静态内容起始点
+      current_start = state.offset;
     } else {
-      // 处理静态内容
+      // 处理普通字符
       if let Some(c) = state.consume() {
         static_content.push(c);
       }
     }
-  }
-
-  (has_expression, parts)
-}
-
-/// 解析表达式部分（用于属性值中的表达式）
-fn parse_expression_part(state: &mut ParseState) -> ExpressionPart {
-  let expr_start_pos = state.get_position();
-
-  // 消费 '{{'
-  state.consume_n(2);
-
-  let mut expression_content = String::new();
-  let mut brace_count = 1; // 追踪嵌套的花括号
-
-  // 解析表达式内容
-  while !state.is_eof() {
-    if state.peek_str("{{") {
-      expression_content.push_str("{{");
-      state.consume_n(2);
-      brace_count += 1;
-    } else if state.peek_str("}}") {
-      brace_count -= 1;
-      if brace_count == 0 {
-        state.consume_n(2); // 消费 '}}'
-        break;
-      } else {
-        expression_content.push_str("}}");
-        state.consume_n(2);
-      }
-    } else if let Some(c) = state.consume() {
-      expression_content.push(c);
-    }
-  }
-
-  // 如果表达式未关闭，记录错误
-  if brace_count > 0 {
-    state.record_error(ParseError::UnclosedExpression {
-      position: expr_start_pos,
-    });
-  }
-
-  ExpressionPart::Expression {
-    content: expression_content.trim().to_string(),
-    location: Location {
-      start: expr_start_pos,
-      end: state.get_position(),
-    },
   }
 }

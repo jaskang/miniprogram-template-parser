@@ -3,21 +3,23 @@
 use crate::ast::Position;
 use crate::error::ParseError;
 
-/// 解析状态，跟踪当前解析位置和上下文
-pub struct ParseState<'a> {
-  pub source: &'a str,
+// 解析状态，跟踪当前解析位置和上下文
+pub struct ParseState {
   pub chars: Vec<char>,
+  // 字符索引
   pub offset: usize,
-  pub line: u32,
-  pub column: u32,
+  // 行号
+  pub line: usize,
+  // 列号
+  pub column: usize,
+  // 错误列表
   pub errors: Vec<ParseError>,
 }
 
-impl<'a> ParseState<'a> {
-  /// 创建新的解析状态
-  pub fn new(source: &'a str) -> Self {
+impl ParseState {
+  // 创建新的解析状态
+  pub fn new(source: &str) -> Self {
     Self {
-      source,
       chars: source.chars().collect(),
       offset: 0,
       line: 1,
@@ -26,49 +28,25 @@ impl<'a> ParseState<'a> {
     }
   }
 
-  /// 记录错误
+  // 记录错误
   pub fn record_error(&mut self, error: ParseError) {
     self.errors.push(error);
   }
 
-  /// 获取已收集的错误
-  pub fn get_errors(&self) -> &[ParseError] {
-    &self.errors
-  }
-
-  /// 获取当前位置
-  pub fn get_position(&self) -> Position {
+  // 获取当前位置
+  pub fn position(&self) -> Position {
     Position {
       line: self.line,
       column: self.column,
     }
   }
 
-  /// 设置当前位置（用于回溯）
-  pub fn set_position(&mut self, position: usize, line: u32, column: u32) {
-    self.offset = position;
-    self.line = line;
-    self.column = column;
-  }
-
-  /// 保存当前状态（用于回溯）
-  pub fn save_state(&self) -> (usize, u32, u32) {
-    (self.offset, self.line, self.column)
-  }
-
-  /// 恢复状态（用于回溯）
-  pub fn restore_state(&mut self, state: (usize, u32, u32)) {
-    self.offset = state.0;
-    self.line = state.1;
-    self.column = state.2;
-  }
-
-  /// 检查是否已经到达源码结尾
+  // 检查是否已经到达源码结尾
   pub fn is_eof(&self) -> bool {
     self.offset >= self.chars.len()
   }
 
-  /// 查看当前字符但不消费
+  // 查看当前字符但不消费
   pub fn peek(&self) -> Option<char> {
     if self.is_eof() {
       None
@@ -77,7 +55,7 @@ impl<'a> ParseState<'a> {
     }
   }
 
-  /// 查看接下来的n个字符但不消费
+  // 查看接下来的n个字符但不消费
   pub fn peek_n(&self, n: usize) -> String {
     if self.is_eof() {
       return String::new();
@@ -87,12 +65,12 @@ impl<'a> ParseState<'a> {
     self.chars[self.offset..end].iter().collect()
   }
 
-  /// 查看接下来的字符是否匹配给定的字符串
+  // 查看接下来的字符是否匹配给定的字符串
   pub fn peek_str(&self, s: &str) -> bool {
     self.peek_n(s.len()) == s
   }
 
-  /// 消费当前字符并前进
+  // 消费当前字符并前进
   pub fn consume(&mut self) -> Option<char> {
     if self.is_eof() {
       return None;
@@ -112,7 +90,7 @@ impl<'a> ParseState<'a> {
     Some(c)
   }
 
-  /// 消费指定数量的字符
+  // 消费指定数量的字符
   pub fn consume_n(&mut self, n: usize) -> String {
     let mut result = String::new();
     let count = n.min(self.chars.len() - self.offset);
@@ -126,7 +104,7 @@ impl<'a> ParseState<'a> {
     result
   }
 
-  /// 消费字符直到满足条件
+  // 消费字符直到满足条件
   pub fn consume_while<F>(&mut self, predicate: F) -> String
   where
     F: Fn(char) -> bool,
@@ -159,12 +137,12 @@ impl<'a> ParseState<'a> {
     result
   }
 
-  /// 跳过空白字符
+  // 跳过空白字符
   pub fn skip_whitespace(&mut self) {
     self.consume_while(|c| c.is_whitespace());
   }
 
-  /// 消费直到指定的字符串
+  // 消费直到指定的字符串
   pub fn consume_until(&mut self, target: &str) -> String {
     let mut result = String::new();
     let target_chars: Vec<char> = target.chars().collect();
@@ -188,5 +166,14 @@ impl<'a> ParseState<'a> {
     }
 
     result
+  }
+
+  // 获取指定位置的字符串
+  pub fn get_content(&self, start: usize, end: usize) -> String {
+    if start >= self.chars.len() || end >= self.chars.len() {
+      String::new()
+    } else {
+      self.chars[start..end].iter().collect()
+    }
   }
 }
