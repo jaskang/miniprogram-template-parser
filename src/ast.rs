@@ -42,33 +42,17 @@ impl From<Range<Position>> for Location {
 pub struct Attribute {
   // 属性名
   pub name: String,
+  pub content: String,
   pub start: usize,
   pub end: usize,
   // 属性值，可能为空（如布尔属性）
   // 静态值（纯字符串），如 class="container" value 为 [Static]
   // 动态值（包含表达式），如 class="{{index}}" value 为 [Expression]
   // 多个值，如 class="container {{index}} {{name}}" value 为 [Static, Expression, Expression, Static]
-  pub value: Vec<AttributeValue>,
+  // 这里是个数组，包括 Node::Text, Node::Expression 类型
+  pub children: Vec<Node>,
   // 位置信息
   pub location: Location,
-}
-
-/// 属性值类型
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum AttributeValue {
-  Text {
-    content: String,
-    start: usize,
-    end: usize,
-    location: Location,
-  },
-  Expression {
-    content: String,
-    start: usize,
-    end: usize,
-    location: Location,
-  },
 }
 
 /// AST节点类型，代表WXML文档中的各种元素
