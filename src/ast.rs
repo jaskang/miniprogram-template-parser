@@ -55,7 +55,7 @@ pub struct Attribute {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AttributeValue {
-  Static {
+  Text {
     content: String,
     start: usize,
     end: usize,

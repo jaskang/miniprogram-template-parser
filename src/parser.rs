@@ -512,7 +512,7 @@ fn parse_attribute_content(
     if state.peek() == quote {
       // 处理剩余的静态内容
       if !static_content.is_empty() {
-        values.push(AttributeValue::Static {
+        values.push(AttributeValue::Text {
           content: static_content,
           start: current_start,
           end: state.offset,
@@ -531,7 +531,7 @@ fn parse_attribute_content(
     if state.peek_str("{{") {
       // 先处理前面积累的静态内容
       if !static_content.is_empty() {
-        values.push(AttributeValue::Static {
+        values.push(AttributeValue::Text {
           content: static_content,
           start: current_start,
           end: state.offset,
