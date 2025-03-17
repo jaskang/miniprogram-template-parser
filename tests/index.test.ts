@@ -47,11 +47,13 @@ describe('template parser', () => {
     const result = JSON.parse(parse(tpl))
     expect(result.children[0].attributes).toEqual([
       {
+        end: 23,
         location: {
           end: { column: 24, line: 1 },
           start: { column: 7, line: 1 },
         },
         name: 'class',
+        start: 6,
         value: [
           {
             content: 'container',
@@ -66,11 +68,13 @@ describe('template parser', () => {
         ],
       },
       {
+        end: 47,
         location: {
           end: { column: 48, line: 1 },
           start: { column: 25, line: 1 },
         },
         name: 'bindtap',
+        start: 24,
         value: [
           {
             content: '{{handleTap}}',

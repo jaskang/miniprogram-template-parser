@@ -439,6 +439,7 @@ fn parse_attributes(state: &mut ParseState) -> Vec<Attribute> {
 /// 解析单个属性
 fn parse_attribute(state: &mut ParseState) -> Option<Attribute> {
   let start_pos = state.position();
+  let start_offset = state.offset;
 
   // 解析属性名
   let name = state.consume_while(|c| !c.is_whitespace() && c != '=' && c != '>' && c != '/');
@@ -461,6 +462,8 @@ fn parse_attribute(state: &mut ParseState) -> Option<Attribute> {
 
   Some(Attribute {
     name,
+    start: start_offset,
+    end: state.offset,
     value,
     location: Location {
       start: start_pos,

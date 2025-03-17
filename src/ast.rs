@@ -42,6 +42,8 @@ impl From<Range<Position>> for Location {
 pub struct Attribute {
   // 属性名
   pub name: String,
+  pub start: usize,
+  pub end: usize,
   // 属性值，可能为空（如布尔属性）
   // 静态值（纯字符串），如 class="container" value 为 [Static]
   // 动态值（包含表达式），如 class="{{index}}" value 为 [Expression]
