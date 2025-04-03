@@ -36,6 +36,7 @@ impl ParseState {
   // 获取当前位置
   pub fn position(&self) -> Position {
     Position {
+      offset: self.offset,
       line: self.line,
       column: self.column,
     }

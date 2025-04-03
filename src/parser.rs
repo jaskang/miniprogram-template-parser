@@ -1,25 +1,22 @@
 //! 主解析模块，包含解析器的核心实现
 
-use serde_json;
+use std::f32::consts::E;
 
-use crate::ast::{Attribute, AttributeValue, Location, Node, Position};
+use crate::ast::{Attribute, Document, Location, Node, Position, Value};
 use crate::error::ParseError;
 use crate::state::ParseState;
 
 /// 主解析函数，解析WXML字符串并生成AST
-pub fn parse(source: &str) -> Node {
+pub fn parse(source: &str) -> Document {
   let mut state = ParseState::new(source);
   let start_pos = state.position();
-  let start_offset = state.offset;
 
   // 解析文档
   let document = parse_document(&mut state);
 
   // 创建文档节点
-  let ast = Node::Document {
+  let ast = Document {
     children: document,
-    start: start_offset,
-    end: state.offset,
     location: Location {
       start: start_pos,
       end: state.position(),
@@ -27,11 +24,6 @@ pub fn parse(source: &str) -> Node {
   };
 
   ast
-}
-
-/// 将AST转换为JSON字符串
-pub fn ast_to_json(ast: &Node) -> String {
-  serde_json::to_string_pretty(ast).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// 解析整个文档
@@ -64,7 +56,6 @@ fn parse_next_node(state: &mut ParseState) -> Node {
     if state.peek_str("</") {
       // 这里可能是无效的关闭标签，跳过它
       let pos = state.position();
-      let start_offset = state.offset;
       state.consume_while(|c| c != '>');
       if state.peek() == Some('>') {
         state.consume(); // 消费 '>'
@@ -72,8 +63,6 @@ fn parse_next_node(state: &mut ParseState) -> Node {
       // 返回空文本节点表示跳过的内容
       Node::Text {
         content: String::new(),
-        start: start_offset,
-        end: state.offset,
         location: Location {
           start: pos,
           end: state.position(),
@@ -144,8 +133,6 @@ fn parse_element(state: &mut ParseState) -> Node {
       children: Vec::new(),
       is_self_closing: true,
       content,
-      start: start_offset,
-      end: state.offset,
       location: Location {
         start: start_pos,
         end: state.position(),
@@ -167,8 +154,6 @@ fn parse_element(state: &mut ParseState) -> Node {
     children,
     is_self_closing: false,
     content: full_content,
-    start: start_offset,
-    end: end_offset,
     location: Location {
       start: start_pos,
       end: end_pos,
@@ -217,6 +202,7 @@ fn parse_element_children(state: &mut ParseState, parent_tag_name: &str) -> Vec<
           expected: parent_tag_name.to_string(),
           found: close_tag_name.clone(),
           position: Position {
+            offset: state.offset,
             line: state.line,
             column: state.column - close_tag_name.len() as u32,
           },
@@ -263,11 +249,11 @@ fn parse_wxs_tag(
   let full_content = state.pick_rang(start_offset, state.offset);
 
   // 创建一个文本节点来保存脚本内容
-  let script_node = Node::Text {
+  let script_node = Node::Expression {
     content: script_content,
-    start: (start_offset + tag_content.len() as u32),
+    // start: (start_offset + tag_content.len() as u32),
     // end: state.offset,
-    end: (state.offset - 6), // 减去 "</wxs>" 的长度
+    // end: (state.offset - 6), // 减去 "</wxs>" 的长度
     location: Location {
       start: start_pos,
       end: state.position(),
@@ -281,8 +267,6 @@ fn parse_wxs_tag(
     children: vec![script_node],
     is_self_closing: false,
     content: full_content,
-    start: start_offset,
-    end: state.offset,
     location: Location {
       start: start_pos,
       end: state.position(),
@@ -310,8 +294,6 @@ fn parse_text(state: &mut ParseState) -> Node {
 
   Node::Text {
     content: text_content,
-    start: start_offset,
-    end: state.offset,
     location: Location {
       start: start_pos,
       end: state.position(),
@@ -359,8 +341,6 @@ fn parse_expression(state: &mut ParseState) -> Node {
 
   Node::Expression {
     content: expression_content.trim().to_string(),
-    start: start_offset,
-    end: state.offset,
     location: Location {
       start: start_pos,
       end: state.position(),
@@ -392,8 +372,6 @@ fn parse_comment(state: &mut ParseState) -> Node {
 
   Node::Comment {
     content: comment_content,
-    start: start_offset,
-    end: state.offset,
     location: Location {
       start: start_pos,
       end: state.position(),
@@ -443,9 +421,9 @@ fn parse_attribute(state: &mut ParseState) -> Option<Attribute> {
     state.consume(); // 消费 '='
     state.skip_whitespace();
 
-    parse_attribute_value(state)
+    Some(parse_attribute_value(state))
   } else {
-    Vec::new()
+    None
   };
 
   Some(Attribute {
@@ -459,7 +437,7 @@ fn parse_attribute(state: &mut ParseState) -> Option<Attribute> {
 }
 
 /// 解析属性值，可能是静态字符串或表达式或混合内容
-fn parse_attribute_value(state: &mut ParseState) -> Vec<AttributeValue> {
+fn parse_attribute_value(state: &mut ParseState) -> Vec<Value> {
   state.skip_whitespace();
 
   let mut values = Vec::new();
@@ -489,7 +467,7 @@ fn parse_attribute_content(
   state: &mut ParseState,
   quote: Option<char>,
   start_pos: Position,
-  values: &mut Vec<AttributeValue>,
+  values: &mut Vec<Value>,
 ) {
   // 当前静态内容
   let mut static_content = String::new();
@@ -501,10 +479,8 @@ fn parse_attribute_content(
     if state.peek() == quote {
       // 处理剩余的静态内容
       if !static_content.is_empty() {
-        values.push(AttributeValue::Static {
+        values.push(Value::Text {
           content: static_content,
-          start: current_start,
-          end: state.offset,
           location: Location {
             start: start_pos, // 简化处理，使用属性开始位置
             end: state.position(),
@@ -520,10 +496,8 @@ fn parse_attribute_content(
     if state.peek_str("{{") {
       // 先处理前面积累的静态内容
       if !static_content.is_empty() {
-        values.push(AttributeValue::Static {
+        values.push(Value::Text {
           content: static_content,
-          start: current_start,
-          end: state.offset,
           location: Location {
             start: start_pos, // 简化处理，使用属性开始位置
             end: state.position(),
@@ -564,10 +538,8 @@ fn parse_attribute_content(
 
       // 添加表达式部分到 values
       let full_expr = format!("{{{{{}}}}}", expr_content.trim());
-      values.push(AttributeValue::Expression {
+      values.push(Value::Expression {
         content: full_expr,
-        start: expr_start_offset,
-        end: state.offset,
         location: Location {
           start: expr_start_pos,
           end: state.position(),
