@@ -6,17 +6,8 @@ use crate::ast::{Attribute, AttributeValue, Location, Node, Position};
 use crate::error::ParseError;
 use crate::state::ParseState;
 
-/// 解析结果类型
-#[derive(Debug)]
-pub struct ParserResult {
-  /// 解析生成的AST
-  pub ast: Node,
-  /// 解析过程中发现的错误
-  pub errors: Vec<ParseError>,
-}
-
 /// 主解析函数，解析WXML字符串并生成AST
-pub fn parse(source: &str) -> ParserResult {
+pub fn parse(source: &str) -> Node {
   let mut state = ParseState::new(source);
   let start_pos = state.position();
   let start_offset = state.offset;
@@ -35,10 +26,7 @@ pub fn parse(source: &str) -> ParserResult {
     },
   };
 
-  ParserResult {
-    ast,
-    errors: state.errors,
-  }
+  ast
 }
 
 /// 将AST转换为JSON字符串
@@ -141,7 +129,7 @@ fn parse_element(state: &mut ParseState) -> Node {
   }
 
   // 捕获原始内容
-  let content = state.get_content(start_offset, state.offset);
+  let content = state.pick_rang(start_offset, state.offset);
 
   // 特殊处理 wxs 标签
   if name.to_lowercase() == "wxs" && !is_self_closing {
@@ -171,7 +159,7 @@ fn parse_element(state: &mut ParseState) -> Node {
   let end_pos = state.position();
 
   // 更新内容以包含整个元素
-  let full_content = state.get_content(start_offset, end_offset);
+  let full_content = state.pick_rang(start_offset, end_offset);
 
   Node::Element {
     name,
@@ -230,7 +218,7 @@ fn parse_element_children(state: &mut ParseState, parent_tag_name: &str) -> Vec<
           found: close_tag_name.clone(),
           position: Position {
             line: state.line,
-            column: state.column - close_tag_name.len(),
+            column: state.column - close_tag_name.len() as u32,
           },
         });
 
@@ -251,7 +239,7 @@ fn parse_wxs_tag(
   state: &mut ParseState,
   attributes: Vec<Attribute>,
   start_pos: Position,
-  start_offset: usize,
+  start_offset: u32,
   tag_content: String,
 ) -> Node {
   // 收集wxs标签内容直到</wxs>
@@ -272,12 +260,13 @@ fn parse_wxs_tag(
     }
   }
 
-  let full_content = state.get_content(start_offset, state.offset);
+  let full_content = state.pick_rang(start_offset, state.offset);
 
   // 创建一个文本节点来保存脚本内容
   let script_node = Node::Text {
     content: script_content,
-    start: (start_offset + tag_content.len()),
+    start: (start_offset + tag_content.len() as u32),
+    // end: state.offset,
     end: (state.offset - 6), // 减去 "</wxs>" 的长度
     location: Location {
       start: start_pos,

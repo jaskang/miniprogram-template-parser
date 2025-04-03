@@ -1,16 +1,19 @@
 //! 抽象语法树(AST)相关的数据结构
 
+use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::ops::Range;
 
 /// 定义位置信息，用于标记AST节点在源码中的位置
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[napi(object)]
 pub struct Position {
   /// 行号，从1开始
-  pub line: usize,
+  pub line: u32,
   /// 列号，从1开始
-  pub column: usize,
+  pub column: u32,
 }
 
 impl fmt::Display for Position {
@@ -21,6 +24,7 @@ impl fmt::Display for Position {
 
 /// 定义AST节点的位置范围
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[napi(object)]
 pub struct Location {
   /// 开始位置
   pub start: Position,
@@ -39,6 +43,7 @@ impl From<Range<Position>> for Location {
 
 /// 属性节点，表示元素上的属性
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[napi(object)]
 pub struct Attribute {
   // 属性名
   pub name: String,
@@ -54,17 +59,18 @@ pub struct Attribute {
 /// 属性值类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[napi]
 pub enum AttributeValue {
   Static {
     content: String,
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
     location: Location,
   },
   Expression {
     content: String,
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
     location: Location,
   },
 }
@@ -72,12 +78,12 @@ pub enum AttributeValue {
 /// AST节点类型，代表WXML文档中的各种元素
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[napi]
 pub enum Node {
-  /// 文档根节点，包含所有顶层节点
   Document {
     children: Vec<Node>,
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
     location: Location,
   },
   /// 元素节点，如 <view>, <button> 等
@@ -87,30 +93,30 @@ pub enum Node {
     children: Vec<Node>,
     is_self_closing: bool,
     content: String,
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
     location: Location,
   },
   Text {
     content: String,
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
     location: Location,
   },
   /// 表达式节点（双括号表达式），如 {{message}}
   Expression {
     // 表达式内容，不包含外层的双括号
     content: String,
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
     location: Location,
   },
   /// 注释节点，如 <!-- 注释 -->
   Comment {
     // 注释内容，不包含 <!-- 和 -->
     content: String,
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
     location: Location,
   },
 }
