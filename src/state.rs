@@ -158,7 +158,7 @@ impl ParseState {
   // 获取指定位置的字符串
   pub fn pick_rang(&self, start: u32, end: u32) -> String {
     let len = self.chars.len() as u32;
-    let start = start.max(0);
+    let start = start.min(len - 1);
     let end = end.min(len - 1);
     if start >= end {
       String::new()
