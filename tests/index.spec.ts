@@ -8,9 +8,9 @@ describe("parse", () => {
     expect(result).toBeDefined();
   });
   it("复杂的", () => {
-    const wxml = `<view class="container" bindtap="{{handleTap}}"></view>`;
+    const wxml = `<view class="container {{test}}" bindtap="{{handleTap}}"></view>`;
     const result = parse(wxml);
-    console.log(result.children[0]);
+    console.log(result.children[0].attributes[0]);
     expect(result).toBeDefined();
   });
 });

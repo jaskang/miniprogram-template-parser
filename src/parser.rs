@@ -2,12 +2,12 @@
 
 use std::f32::consts::E;
 
-use crate::ast::{Attribute, Document, Location, Node, Position, Value};
+use crate::ast::{Attribute, Location, Node, Position, Root, Value};
 use crate::error::ParseError;
 use crate::state::ParseState;
 
 /// 主解析函数，解析WXML字符串并生成AST
-pub fn parse(source: &str) -> Document {
+pub fn parse(source: &str) -> Root {
   let mut state = ParseState::new(source);
   let start_pos = state.position();
 
@@ -15,7 +15,7 @@ pub fn parse(source: &str) -> Document {
   let document = parse_document(&mut state);
 
   // 创建文档节点
-  let ast = Document {
+  let ast = Root {
     children: document,
     location: Location {
       start: start_pos,

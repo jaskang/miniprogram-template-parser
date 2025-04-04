@@ -96,7 +96,7 @@ pub enum Node {
 
 #[derive(Debug, Clone)]
 #[napi(object)]
-pub struct Document {
+pub struct Root {
   pub children: Vec<Node>,
   pub location: Location,
 }

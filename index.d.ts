@@ -7,11 +7,6 @@ export interface Attribute {
   location: Location
 }
 
-export interface Document {
-  children: Array<Node>
-  location: Location
-}
-
 /** 定义AST节点的位置范围 */
 export interface Location {
   /** 开始位置 */
@@ -35,7 +30,7 @@ export type Node =
  * 由于 napi-rs 3.0.0-alpha 版本的限制，我们返回一个包装对象
  * 通过 toJson() 方法可以获取 JSON 格式的 AST
  */
-export declare function parse(input: string): Document
+export declare function parse(input: string): Root
 
 /** 定义位置信息，用于标记AST节点在源码中的位置 */
 export interface Position {
@@ -45,6 +40,11 @@ export interface Position {
   line: number
   /** 列号，从1开始 */
   column: number
+}
+
+export interface Root {
+  children: Array<Node>
+  location: Location
 }
 
 export type Value =
