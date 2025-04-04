@@ -15,15 +15,13 @@ pub fn parse(source: &str) -> Root {
   let document = parse_document(&mut state);
 
   // 创建文档节点
-  let ast = Root {
+  Root {
     children: document,
     location: Location {
       start: start_pos,
       end: state.position(),
     },
-  };
-
-  ast
+  }
 }
 
 /// 解析整个文档
