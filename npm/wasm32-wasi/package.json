@@ -30,7 +30,7 @@
     "access": "public"
   },
   "repository": {
-    "url": "git+ssh://git@github.com/napi-rs/package-template-pnpm.git",
+    "url": "git+ssh://git@github.com/jaskang/miniprogram-template-parser.git",
     "type": "git"
   },
   "browser": "miniprogram-template-parser.wasi-browser.js",
