@@ -162,7 +162,7 @@ fn parse_element(state: &mut ParseState) -> Node {
   let full_content = state.pick_rang(start_offset, end_offset);
 
   let end_tag_start = Position {
-    offset: end_pos.offset + 2,
+    offset: end_pos.offset - 2,
     line: end_pos.line,
     column: end_pos.column + 2,
   };

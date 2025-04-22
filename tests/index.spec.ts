@@ -7,7 +7,40 @@ describe("parse", () => {
     // console.log(result);
     expect(result).toBeDefined();
   });
-
+  it("start tag", () => {
+    const result = parse(`<text>Hello</text>`);
+    // console.log(result);
+    expect(result.children[0].startTag).toEqual({
+      location: {
+        start: { column: 2, line: 1, offset: 1 },
+        end: { column: 6, line: 1, offset: 5 },
+      },
+      value: "text",
+    });
+    const result1 = parse(`<text  class="cls" />`);
+    // console.log(result);
+    expect(result1.children[0].startTag).toEqual({
+      location: {
+        start: { column: 2, line: 1, offset: 1 },
+        end: { column: 6, line: 1, offset: 5 },
+      },
+      value: "text",
+    });
+  });
+  it("end tag", () => {
+    const result = parse(`<text>Hello</text>`);
+    // console.log(result);
+    expect(result.children[0].endTag).toEqual({
+      location: {
+        start: { column: 14, line: 1, offset: 13 },
+        end: { column: 18, line: 1, offset: 17 },
+      },
+      value: "text",
+    });
+    const result1 = parse(`<text  class="cls" />`);
+    // console.log(result);
+    expect(result1.children[0].endTag).toEqual(null);
+  });
   it("attributes", () => {
     const wxml = `<view class="cls1" bindtap="{{handleTap}}"></view>`;
     const result = parse(wxml);
@@ -78,5 +111,10 @@ describe("parse", () => {
         },
       },
     ]);
+  });
+  it("wxs", () => {
+    const result = parse(`<wxs>console.log(a)</wxs>`);
+    console.log(result);
+    expect(result).toBeDefined();
   });
 });
