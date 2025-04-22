@@ -2,7 +2,7 @@
 
 use std::f32::consts::E;
 
-use crate::ast::{Attribute, Location, Node, Position, Root, Value};
+use crate::ast::{Attribute, Location, Node, Position, Root, Tag, Value};
 use crate::error::ParseError;
 use crate::state::ParseState;
 
@@ -80,7 +80,9 @@ fn parse_next_node(state: &mut ParseState) -> Node {
   }
 }
 
-/// 解析元素节点
+/**
+ * 解析元素节点
+ */
 fn parse_element(state: &mut ParseState) -> Node {
   let start_pos = state.position();
   let start_offset = state.offset;
@@ -88,8 +90,21 @@ fn parse_element(state: &mut ParseState) -> Node {
   // 消费开始的 '<'
   state.consume();
 
+  let tag_start_pos = state.position();
   // 解析标签名
   let name = state.consume_while(|c| !c.is_whitespace() && c != '>' && c != '/');
+
+  let start_tag = Tag {
+    value: name.clone(),
+    location: Location {
+      start: tag_start_pos,
+      end: Position {
+        offset: tag_start_pos.offset + name.len() as u32,
+        line: tag_start_pos.line,
+        column: tag_start_pos.column + name.len() as u32,
+      },
+    },
+  };
 
   state.skip_whitespace();
 
@@ -118,15 +133,12 @@ fn parse_element(state: &mut ParseState) -> Node {
   // 捕获原始内容
   let content = state.pick_rang(start_offset, state.offset);
 
-  // 特殊处理 wxs 标签
-  if name.to_lowercase() == "wxs" && !is_self_closing {
-    return parse_wxs_tag(state, attributes, start_pos, start_offset, content);
-  }
-
   // 如果是自闭合标签，没有子节点
   if is_self_closing {
     return Node::Element {
       name,
+      start_tag,
+      end_tag: None,
       attributes,
       children: Vec::new(),
       is_self_closing: true,
@@ -139,15 +151,36 @@ fn parse_element(state: &mut ParseState) -> Node {
   }
 
   // 解析子节点
-  let children = parse_element_children(state, &name);
+  let children = match name.to_lowercase().as_str() {
+    "wxs" => vec![parse_wxs_children(state)],
+    _ => parse_element_children(state, name.as_str()),
+  };
   let end_offset = state.offset;
   let end_pos = state.position();
 
   // 更新内容以包含整个元素
   let full_content = state.pick_rang(start_offset, end_offset);
 
+  let end_tag_start = Position {
+    offset: end_pos.offset + 2,
+    line: end_pos.line,
+    column: end_pos.column + 2,
+  };
+  let end_tag = Tag {
+    value: name.clone(),
+    location: Location {
+      start: end_tag_start,
+      end: Position {
+        offset: end_tag_start.offset + name.len() as u32,
+        line: end_pos.line,
+        column: end_tag_start.column + name.len() as u32,
+      },
+    },
+  };
   Node::Element {
     name,
+    start_tag,
+    end_tag: Some(end_tag),
     attributes,
     children,
     is_self_closing: false,
@@ -219,16 +252,11 @@ fn parse_element_children(state: &mut ParseState, parent_tag_name: &str) -> Vec<
 }
 
 /// 解析wxs标签
-fn parse_wxs_tag(
-  state: &mut ParseState,
-  attributes: Vec<Attribute>,
-  start_pos: Position,
-  start_offset: u32,
-  tag_content: String,
-) -> Node {
+fn parse_wxs_children(state: &mut ParseState) -> Node {
   // 收集wxs标签内容直到</wxs>
+  let start_pos = state.position();
   let script_content = state.consume_until("</wxs");
-
+  let end_pos = state.position();
   // 消费结束标签 </wxs>
   if state.peek_str("</wxs") {
     state.consume_n(5);
@@ -243,9 +271,6 @@ fn parse_wxs_tag(
       });
     }
   }
-
-  let full_content = state.pick_rang(start_offset, state.offset);
-
   // 创建一个文本节点来保存脚本内容
   let script_node = Node::Expression {
     content: script_content,
@@ -254,22 +279,10 @@ fn parse_wxs_tag(
     // end: (state.offset - 6), // 减去 "</wxs>" 的长度
     location: Location {
       start: start_pos,
-      end: state.position(),
+      end: end_pos,
     },
   };
-
-  // 返回包含脚本内容的 wxs 元素节点
-  Node::Element {
-    name: "wxs".to_string(),
-    attributes,
-    children: vec![script_node],
-    is_self_closing: false,
-    content: full_content,
-    location: Location {
-      start: start_pos,
-      end: state.position(),
-    },
-  }
+  return script_node;
 }
 
 /// 解析文本节点
@@ -469,7 +482,11 @@ fn parse_attribute_content(
 ) {
   // 当前静态内容
   let mut static_content = String::new();
-  let mut current_start = state.offset;
+  let mut current_start = Position {
+    offset: start_pos.offset + 1,
+    line: start_pos.line,
+    column: start_pos.column + 1,
+  };
 
   // 在属性值中查找表达式和静态文本
   while !state.is_eof() {
@@ -480,7 +497,7 @@ fn parse_attribute_content(
         values.push(Value::Text {
           content: static_content,
           location: Location {
-            start: start_pos, // 简化处理，使用属性开始位置
+            start: current_start, // 简化处理，使用属性开始位置
             end: state.position(),
           },
         });
@@ -497,7 +514,7 @@ fn parse_attribute_content(
         values.push(Value::Text {
           content: static_content,
           location: Location {
-            start: start_pos, // 简化处理，使用属性开始位置
+            start: current_start, // 简化处理，使用属性开始位置
             end: state.position(),
           },
         });
@@ -545,7 +562,7 @@ fn parse_attribute_content(
       });
 
       // 重置静态内容起始点
-      current_start = state.offset;
+      current_start = state.position();
     } else {
       // 处理普通字符
       if let Some(c) = state.consume() {

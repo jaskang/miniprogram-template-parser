@@ -47,7 +47,9 @@ impl ParseState {
     self.offset >= self.chars.len() as u32
   }
 
-  // 消费当前字符并前进
+  /**
+   * 消费当前字符并前进到下一个字符
+   */
   pub fn consume(&mut self) -> Option<char> {
     if self.is_eof() {
       return None;
@@ -81,7 +83,9 @@ impl ParseState {
     result
   }
 
-  // 消费字符直到满足条件
+  /**
+   * 消费字符直到满足条件
+   */
   pub fn consume_while<F>(&mut self, predicate: F) -> String
   where
     F: Fn(char) -> bool,

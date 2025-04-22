@@ -66,6 +66,13 @@ pub enum Value {
   Expression { content: String, location: Location },
 }
 
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct Tag {
+  pub value: String,
+  // 位置信息
+  pub location: Location,
+}
 /// AST节点类型，代表WXML文档中的各种元素
 #[derive(Debug, Clone)]
 #[napi]
@@ -73,6 +80,8 @@ pub enum Node {
   /// 元素节点，如 <view>, <button> 等
   Element {
     name: String,
+    start_tag: Tag,
+    end_tag: Option<Tag>,
     attributes: Vec<Attribute>,
     children: Vec<Node>,
     is_self_closing: bool,

@@ -17,7 +17,7 @@ export interface Location {
 
 /** AST节点类型，代表WXML文档中的各种元素 */
 export type Node =
-  | { type: 'Element', name: string, attributes: Array<Attribute>, children: Array<Node>, isSelfClosing: boolean, content: string, location: Location }
+  | { type: 'Element', name: string, startTag: Tag, endTag?: Tag, attributes: Array<Attribute>, children: Array<Node>, isSelfClosing: boolean, content: string, location: Location }
   | { type: 'Text', content: string, location: Location }
   | { type: 'Expression', content: string, location: Location }
   | { type: 'Comment', content: string, location: Location }
@@ -44,6 +44,11 @@ export interface Position {
 
 export interface Root {
   children: Array<Node>
+  location: Location
+}
+
+export interface Tag {
+  value: string
   location: Location
 }
 
