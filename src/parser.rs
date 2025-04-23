@@ -1,573 +1,1114 @@
-//! 主解析模块，包含解析器的核心实现
+//! This parser is designed for internal use,
+//! not generating general-purpose AST.
+//!
+//! Also, the parser consumes string then produces AST directly without tokenizing.
+//! For a formal parser, it should be:
+//! `source -> tokens (produced by lexer/tokenizer) -> AST (produced by parser)`.
+//! So, if you're learning or looking for a parser,
+//! this is not a good example and you should look for other projects.
 
-use std::f32::consts::E;
+use crate::{
+  ast::*,
+  error::{SyntaxError, SyntaxErrorKind},
+  helpers,
+};
+use std::{cmp::Ordering, iter::Peekable, ops::ControlFlow, str::CharIndices};
 
-use crate::ast::{Attribute, Location, Node, Position, Root, Tag, Value};
-use crate::error::ParseError;
-use crate::state::ParseState;
-
-/// 主解析函数，解析WXML字符串并生成AST
-pub fn parse(source: &str) -> Root {
-  let mut state = ParseState::new(source);
-  let start_pos = state.position();
-
-  // 解析文档
-  let document = parse_document(&mut state);
-
-  // 创建文档节点
-  Root {
-    children: document,
-    location: Location {
-      start: start_pos,
-      end: state.position(),
-    },
-  }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Supported languages.
+pub enum Language {
+  Html,
+  Vue,
 }
 
-/// 解析整个文档
-fn parse_document(state: &mut ParseState) -> Vec<Node> {
-  let mut nodes = Vec::new();
-
-  // 解析直到文件结束
-  while !state.is_eof() {
-    state.skip_whitespace();
-
-    if state.is_eof() {
-      break;
-    }
-
-    nodes.push(parse_next_node(state));
-  }
-
-  nodes
+pub struct Parser<'s> {
+  source: &'s str,
+  language: Language,
+  chars: Peekable<CharIndices<'s>>,
+  state: ParserState,
 }
 
-/// 解析下一个节点
-fn parse_next_node(state: &mut ParseState) -> Node {
-  // 如果遇到注释开始标记
-  if state.peek_str("<!--") {
-    parse_comment(state)
-  }
-  // 如果遇到标签开始标记
-  else if state.peek_str("<") {
-    // 查看是否是结束标签
-    if state.peek_str("</") {
-      // 这里可能是无效的关闭标签，跳过它
-      let pos = state.position();
-      state.consume_while(|c| c != '>');
-      if state.peek() == Some('>') {
-        state.consume(); // 消费 '>'
-      }
-      // 返回空文本节点表示跳过的内容
-      Node::Text {
-        content: String::new(),
-        location: Location {
-          start: pos,
-          end: state.position(),
-        },
-      }
-    } else {
-      parse_element(state)
+#[derive(Default)]
+struct ParserState {
+  has_front_matter: bool,
+}
+
+impl<'s> Parser<'s> {
+  pub fn new(source: &'s str, language: Language) -> Self {
+    Self {
+      source,
+      language,
+      chars: source.char_indices().peekable(),
+      state: Default::default(),
     }
   }
-  // 如果是表达式的开始
-  else if state.peek_str("{{") {
-    parse_expression(state)
+
+  fn try_parse<F, R>(&mut self, f: F) -> PResult<R>
+  where
+    F: FnOnce(&mut Self) -> PResult<R>,
+  {
+    let chars = self.chars.clone();
+    let result = f(self);
+    if result.is_err() {
+      self.chars = chars;
+    }
+    result
   }
-  // 否则，这是文本内容
-  else {
-    parse_text(state)
+
+  fn emit_error(&mut self, kind: SyntaxErrorKind) -> SyntaxError {
+    let pos = self
+      .chars
+      .peek()
+      .map(|(pos, _)| *pos)
+      .unwrap_or(self.source.len());
+    self.emit_error_with_pos(kind, pos)
   }
-}
 
-/**
- * 解析元素节点
- */
-fn parse_element(state: &mut ParseState) -> Node {
-  let start_pos = state.position();
-  let start_offset = state.offset;
-
-  // 消费开始的 '<'
-  state.consume();
-
-  let tag_start_pos = state.position();
-  // 解析标签名
-  let name = state.consume_while(|c| !c.is_whitespace() && c != '>' && c != '/');
-
-  let start_tag = Tag {
-    value: name.clone(),
-    location: Location {
-      start: tag_start_pos,
-      end: Position {
-        offset: tag_start_pos.offset + name.len() as u32,
-        line: tag_start_pos.line,
-        column: tag_start_pos.column + name.len() as u32,
+  fn emit_error_with_pos(&self, kind: SyntaxErrorKind, pos: usize) -> SyntaxError {
+    let search = memchr::memchr_iter(b'\n', self.source.as_bytes()).try_fold(
+      (1, 0),
+      |(line, prev_offset), offset| match pos.cmp(&offset) {
+        Ordering::Less => ControlFlow::Break((line, prev_offset)),
+        Ordering::Equal => ControlFlow::Break((line, prev_offset)),
+        Ordering::Greater => ControlFlow::Continue((line + 1, offset)),
       },
-    },
-  };
-
-  state.skip_whitespace();
-
-  // 解析属性
-  let attributes = parse_attributes(state);
-
-  state.skip_whitespace();
-
-  // 检查是否是自闭合标签
-  let is_self_closing = state.peek() == Some('/');
-  if is_self_closing {
-    state.consume(); // 消费 '/'
-  }
-
-  // 消费结束的 '>'
-  if state.peek() == Some('>') {
-    state.consume();
-  } else {
-    // 标签未正确关闭，记录错误
-    state.record_error(ParseError::GeneralError {
-      message: format!("未正确关闭的标签: <{}", name),
-      position: start_pos,
-    });
-  }
-
-  // 捕获原始内容
-  let content = state.pick_rang(start_offset, state.offset);
-
-  // 如果是自闭合标签，没有子节点
-  if is_self_closing {
-    return Node::Element {
-      name,
-      start_tag,
-      end_tag: None,
-      attributes,
-      children: Vec::new(),
-      is_self_closing: true,
-      content,
-      location: Location {
-        start: start_pos,
-        end: state.position(),
-      },
+    );
+    let (line, column) = match search {
+      ControlFlow::Break((line, offset)) => (line, pos - offset + 1),
+      ControlFlow::Continue((line, _)) => (line, 0),
     };
-  }
-
-  // 解析子节点
-  let children = match name.to_lowercase().as_str() {
-    "wxs" => vec![parse_wxs_children(state)],
-    _ => parse_element_children(state, name.as_str()),
-  };
-  let end_offset = state.offset;
-  let end_pos = state.position();
-
-  // 更新内容以包含整个元素
-  let full_content = state.pick_rang(start_offset, end_offset);
-
-  let end_tag_start = Position {
-    offset: end_pos.offset - 2,
-    line: end_pos.line,
-    column: end_pos.column + 2,
-  };
-  let end_tag = Tag {
-    value: name.clone(),
-    location: Location {
-      start: end_tag_start,
-      end: Position {
-        offset: end_tag_start.offset + name.len() as u32,
-        line: end_pos.line,
-        column: end_tag_start.column + name.len() as u32,
-      },
-    },
-  };
-  Node::Element {
-    name,
-    start_tag,
-    end_tag: Some(end_tag),
-    attributes,
-    children,
-    is_self_closing: false,
-    content: full_content,
-    location: Location {
-      start: start_pos,
-      end: end_pos,
-    },
-  }
-}
-
-/// 解析元素的子节点
-fn parse_element_children(state: &mut ParseState, parent_tag_name: &str) -> Vec<Node> {
-  let mut children = Vec::new();
-
-  // 直到遇到结束标签或文件结束
-  loop {
-    if state.is_eof() {
-      // 文件结束但标签未关闭，记录错误
-      state.record_error(ParseError::UnclosedElement {
-        tag_name: parent_tag_name.to_string(),
-        position: state.position(),
-      });
-      break;
-    }
-
-    // 检查是否是结束标签
-    if state.peek_str("</") {
-      let close_tag_start = state.offset;
-
-      // 消费 '</'
-      state.consume_n(2);
-
-      // 获取结束标签名
-      let close_tag_name = state.consume_while(|c| !c.is_whitespace() && c != '>');
-
-      state.skip_whitespace();
-
-      // 消费结束的 '>'
-      if state.peek() == Some('>') {
-        state.consume();
-      }
-
-      // 检查标签名是否匹配
-      if close_tag_name == parent_tag_name {
-        break;
-      } else {
-        // 标签名不匹配，记录错误
-        state.record_error(ParseError::MismatchedTag {
-          expected: parent_tag_name.to_string(),
-          found: close_tag_name.clone(),
-          position: Position {
-            offset: state.offset,
-            line: state.line,
-            column: state.column - close_tag_name.len() as u32,
-          },
-        });
-
-        // 回溯到结束标签开始位置，将其作为文本处理
-        state.offset = close_tag_start;
-        children.push(parse_text(state));
-      }
-    } else {
-      children.push(parse_next_node(state));
+    SyntaxError {
+      kind,
+      pos,
+      line,
+      column,
     }
   }
 
-  children
-}
-
-/// 解析wxs标签
-fn parse_wxs_children(state: &mut ParseState) -> Node {
-  // 收集wxs标签内容直到</wxs>
-  let start_pos = state.position();
-  let script_content = state.consume_until("</wxs");
-  let end_pos = state.position();
-  // 消费结束标签 </wxs>
-  if state.peek_str("</wxs") {
-    state.consume_n(5);
-    state.skip_whitespace();
-    if state.peek() == Some('>') {
-      state.consume();
-    } else {
-      // wxs标签未正确关闭，记录错误
-      state.record_error(ParseError::GeneralError {
-        message: "wxs标签未正确关闭".to_string(),
-        position: state.position(),
-      });
-    }
-  }
-  // 创建一个文本节点来保存脚本内容
-  let script_node = Node::Expression {
-    content: script_content,
-    // start: (start_offset + tag_content.len() as u32),
-    // end: state.offset,
-    // end: (state.offset - 6), // 减去 "</wxs>" 的长度
-    location: Location {
-      start: start_pos,
-      end: end_pos,
-    },
-  };
-  return script_node;
-}
-
-/// 解析文本节点
-fn parse_text(state: &mut ParseState) -> Node {
-  let start_pos = state.position();
-  let start_offset = state.offset;
-  let mut text_content = String::new();
-
-  // 收集文本内容直到遇到 <, {{ 或文件结束
-  while !state.is_eof() {
-    // 如果遇到元素、注释或表达式的开始
-    if state.peek() == Some('<') || state.peek_str("{{") {
-      break;
-    }
-
-    if let Some(c) = state.consume() {
-      text_content.push(c);
-    }
+  fn skip_ws(&mut self) {
+    while self
+      .chars
+      .next_if(|(_, c)| c.is_ascii_whitespace())
+      .is_some()
+    {}
   }
 
-  Node::Text {
-    content: text_content,
-    location: Location {
-      start: start_pos,
-      end: state.position(),
-    },
-  }
-}
-
-/// 解析双括号表达式
-fn parse_expression(state: &mut ParseState) -> Node {
-  let start_pos = state.position();
-  let start_offset = state.offset;
-
-  // 消费开始的 '{{'
-  state.consume_n(2);
-
-  let mut expression_content = String::new();
-  let mut brace_count = 1; // 追踪嵌套的花括号
-
-  // 收集表达式内容直到遇到匹配的 }} 或文件结束
-  while !state.is_eof() {
-    if state.peek_str("{{") {
-      expression_content.push_str("{{");
-      state.consume_n(2);
-      brace_count += 1;
-    } else if state.peek_str("}}") {
-      brace_count -= 1;
-      if brace_count == 0 {
-        state.consume_n(2); // 消费结束的 '}}'
-        break;
-      } else {
-        expression_content.push_str("}}");
-        state.consume_n(2);
-      }
-    } else if let Some(c) = state.consume() {
-      expression_content.push(c);
-    }
+  fn with_taken<T, F>(&mut self, parser: F) -> PResult<(T, &'s str)>
+  where
+    F: FnOnce(&mut Self) -> PResult<T>,
+  {
+    let start = self
+      .chars
+      .peek()
+      .map(|(i, _)| *i)
+      .unwrap_or(self.source.len());
+    let parsed = parser(self)?;
+    let end = self
+      .chars
+      .peek()
+      .map(|(i, _)| *i)
+      .unwrap_or(self.source.len());
+    Ok((parsed, unsafe { self.source.get_unchecked(start..end) }))
   }
 
-  // 如果表达式未关闭，记录错误
-  if brace_count > 0 {
-    state.record_error(ParseError::UnclosedExpression {
-      position: start_pos,
-    });
-  }
-
-  Node::Expression {
-    content: expression_content.trim().to_string(),
-    location: Location {
-      start: start_pos,
-      end: state.position(),
-    },
-  }
-}
-
-/// 解析注释
-fn parse_comment(state: &mut ParseState) -> Node {
-  let start_pos = state.position();
-  let start_offset = state.offset;
-
-  // 消费开始的 '<!--'
-  state.consume_n(4);
-
-  // 收集注释内容直到遇到 --> 或文件结束
-  let comment_content = state.consume_until("-->");
-
-  // 消费结束的 '-->'
-  if state.peek_str("-->") {
-    state.consume_n(3);
-  } else {
-    // 注释未关闭，记录错误
-    state.record_error(ParseError::GeneralError {
-      message: "注释未关闭".to_string(),
-      position: start_pos,
-    });
-  }
-
-  Node::Comment {
-    content: comment_content,
-    location: Location {
-      start: start_pos,
-      end: state.position(),
-    },
-  }
-}
-
-/// 解析属性列表
-fn parse_attributes(state: &mut ParseState) -> Vec<Attribute> {
-  let mut attributes = Vec::new();
-
-  while !state.is_eof() {
-    state.skip_whitespace();
-
-    // 如果遇到标签结束或自闭合标签
-    if state.peek() == Some('>') || state.peek() == Some('/') {
-      break;
-    }
-
-    // 解析单个属性
-    if let Some(attribute) = parse_attribute(state) {
-      attributes.push(attribute);
-    } else {
-      // 属性解析失败，跳过至下一个空白字符
-      state.consume_while(|c| !c.is_whitespace() && c != '>' && c != '/');
-    }
-  }
-
-  attributes
-}
-
-/// 解析单个属性
-fn parse_attribute(state: &mut ParseState) -> Option<Attribute> {
-  let start_pos = state.position();
-
-  // 解析属性名
-  let name = state.consume_while(|c| !c.is_whitespace() && c != '=' && c != '>' && c != '/');
-
-  if name.is_empty() {
-    return None;
-  }
-
-  state.skip_whitespace();
-
-  // 检查是否有属性值
-  let value = if state.peek() == Some('=') {
-    state.consume(); // 消费 '='
-    state.skip_whitespace();
-
-    Some(parse_attribute_value(state))
-  } else {
-    None
-  };
-
-  Some(Attribute {
-    name,
-    value,
-    location: Location {
-      start: start_pos,
-      end: state.position(),
-    },
-  })
-}
-
-/// 解析属性值，可能是静态字符串或表达式或混合内容
-fn parse_attribute_value(state: &mut ParseState) -> Vec<Value> {
-  state.skip_whitespace();
-
-  let mut values = Vec::new();
-  let start_pos = state.position();
-  let start_offset = state.offset;
-
-  // 检查是否是引号包裹的属性值
-  let quote = if state.peek() == Some('"') || state.peek() == Some('\'') {
-    state.consume() // 消费开始的引号
-  } else {
-    // 记录错误：属性值必须用引号包裹
-    state.record_error(ParseError::GeneralError {
-      message: "属性值必须用引号包裹".to_string(),
-      position: start_pos,
-    });
-    return values;
-  };
-
-  // 解析引号内的所有内容
-  parse_attribute_content(state, quote, start_pos, &mut values);
-
-  values
-}
-
-/// 解析属性内容（引号内）
-fn parse_attribute_content(
-  state: &mut ParseState,
-  quote: Option<char>,
-  start_pos: Position,
-  values: &mut Vec<Value>,
-) {
-  // 当前静态内容
-  let mut static_content = String::new();
-  let mut current_start = Position {
-    offset: start_pos.offset + 1,
-    line: start_pos.line,
-    column: start_pos.column + 1,
-  };
-
-  // 在属性值中查找表达式和静态文本
-  while !state.is_eof() {
-    // 如果遇到结束引号
-    if state.peek() == quote {
-      // 处理剩余的静态内容
-      if !static_content.is_empty() {
-        values.push(Value::Text {
-          content: static_content,
-          location: Location {
-            start: current_start, // 简化处理，使用属性开始位置
-            end: state.position(),
-          },
-        });
-      }
-
-      state.consume(); // 消费结束的引号
-      break;
-    }
-
-    // 如果遇到表达式开始
-    if state.peek_str("{{") {
-      // 先处理前面积累的静态内容
-      if !static_content.is_empty() {
-        values.push(Value::Text {
-          content: static_content,
-          location: Location {
-            start: current_start, // 简化处理，使用属性开始位置
-            end: state.position(),
-          },
-        });
-        static_content = String::new();
-      }
-
-      // 记录表达式开始位置
-      let expr_start_pos = state.position();
-      let expr_start_offset = state.offset;
-
-      // 消费开始的 '{{'
-      state.consume_n(2);
-
-      // 解析表达式内容
-      let mut expr_content = String::new();
-      let mut brace_count = 1;
-
-      while !state.is_eof() {
-        if state.peek_str("{{") {
-          expr_content.push_str("{{");
-          state.consume_n(2);
-          brace_count += 1;
-        } else if state.peek_str("}}") {
-          brace_count -= 1;
-          if brace_count == 0 {
-            state.consume_n(2); // 消费结束的 '}}'
-            break;
-          } else {
-            expr_content.push_str("}}");
-            state.consume_n(2);
+  fn parse_attr(&mut self) -> PResult<Attribute<'s>> {
+    match self.language {
+      Language::Html | Language::Angular => self.parse_native_attr().map(Attribute::Native),
+      Language::Vue => self
+        .try_parse(Parser::parse_vue_directive)
+        .map(Attribute::VueDirective)
+        .or_else(|_| self.parse_native_attr().map(Attribute::Native)),
+      Language::Svelte => self
+        .try_parse(Parser::parse_svelte_attr)
+        .map(Attribute::Svelte)
+        .or_else(|_| self.parse_native_attr().map(Attribute::Native)),
+      Language::Astro => self
+        .try_parse(Parser::parse_astro_attr)
+        .map(Attribute::Astro)
+        .or_else(|_| self.parse_native_attr().map(Attribute::Native)),
+      Language::Jinja => {
+        self.skip_ws();
+        let result = if matches!(self.chars.peek(), Some((_, '{'))) {
+          let mut chars = self.chars.clone();
+          chars.next();
+          match chars.next() {
+            Some((_, '{')) => self.parse_native_attr().map(Attribute::Native),
+            Some((_, '#')) => self.parse_jinja_comment().map(Attribute::JinjaComment),
+            _ => self.parse_jinja_tag_or_block(None, &mut Parser::parse_attr),
           }
-        } else if let Some(c) = state.consume() {
-          expr_content.push(c);
+        } else {
+          self.parse_native_attr().map(Attribute::Native)
+        };
+        if result.is_ok() {
+          self.skip_ws();
+        }
+        result
+      }
+      Language::Vento => self
+        .try_parse(|parser| parser.parse_vento_tag_or_block(None))
+        .map(Attribute::VentoTagOrBlock)
+        .or_else(|_| self.parse_native_attr().map(Attribute::Native)),
+    }
+  }
+
+  fn parse_attr_name(&mut self) -> PResult<&'s str> {
+    if matches!(self.language, Language::Jinja | Language::Vento) {
+      let Some((start, mut end)) = (match self.chars.peek() {
+        Some((i, '{')) => {
+          let start = *i;
+          let mut chars = self.chars.clone();
+          chars.next();
+          if let Some((_, '{')) = chars.next() {
+            let end = start + self.parse_mustache_interpolation()?.0.len() + "{{}}".len();
+            Some((start, end))
+          } else {
+            None
+          }
+        }
+        Some((_, c)) if is_attr_name_char(*c) => self
+          .chars
+          .next()
+          .map(|(start, c)| (start, start + c.len_utf8())),
+        _ => None,
+      }) else {
+        return Err(self.emit_error(SyntaxErrorKind::ExpectAttrName));
+      };
+
+      while let Some((_, c)) = self.chars.peek() {
+        if is_attr_name_char(*c) && *c != '{' {
+          end += c.len_utf8();
+          self.chars.next();
+        } else if *c == '{' {
+          let mut chars = self.chars.clone();
+          chars.next();
+          match chars.next() {
+            Some((_, '%')) => {
+              break;
+            }
+            Some((_, '{')) => {
+              end += self.parse_mustache_interpolation()?.0.len() + "{{}}".len();
+            }
+            Some((_, c)) => {
+              end += c.len_utf8();
+              self.chars.next();
+            }
+            None => break,
+          }
+        } else {
+          break;
         }
       }
 
-      // 添加表达式部分到 values
-      let full_expr = format!("{{{{{}}}}}", expr_content.trim());
-      values.push(Value::Expression {
-        content: full_expr,
-        location: Location {
-          start: expr_start_pos,
-          end: state.position(),
-        },
-      });
-
-      // 重置静态内容起始点
-      current_start = state.position();
+      unsafe { Ok(self.source.get_unchecked(start..end)) }
     } else {
-      // 处理普通字符
-      if let Some(c) = state.consume() {
-        static_content.push(c);
+      let Some((start, start_char)) = self.chars.next_if(|(_, c)| is_attr_name_char(*c)) else {
+        return Err(self.emit_error(SyntaxErrorKind::ExpectAttrName));
+      };
+      let mut end = start + start_char.len_utf8();
+
+      while let Some((_, c)) = self.chars.next_if(|(_, c)| is_attr_name_char(*c)) {
+        end += c.len_utf8();
       }
+
+      unsafe { Ok(self.source.get_unchecked(start..end)) }
     }
   }
+
+  fn parse_attr_value(&mut self) -> PResult<(&'s str, usize)> {
+    let quote = self.chars.next_if(|(_, c)| *c == '"' || *c == '\'');
+
+    if let Some((start, quote)) = quote {
+      let is_jinja_or_vento = matches!(self.language, Language::Jinja | Language::Vento);
+      let start = start + 1;
+      let mut end = start;
+      let mut chars_stack = vec![];
+      loop {
+        match self.chars.next() {
+          Some((i, c)) if c == quote => {
+            if chars_stack.is_empty() || !is_jinja_or_vento {
+              end = i;
+              break;
+            } else if chars_stack.last().is_some_and(|last| *last == c) {
+              chars_stack.pop();
+            } else {
+              chars_stack.push(c);
+            }
+          }
+          Some((_, '{')) if is_jinja_or_vento => {
+            chars_stack.push('{');
+          }
+          Some((_, '}'))
+            if is_jinja_or_vento && chars_stack.last().is_some_and(|last| *last == '{') =>
+          {
+            chars_stack.pop();
+          }
+          Some(..) => continue,
+          None => break,
+        }
+      }
+      Ok((unsafe { self.source.get_unchecked(start..end) }, start))
+    } else {
+      fn is_unquoted_attr_value_char(c: char) -> bool {
+        !c.is_ascii_whitespace() && !matches!(c, '"' | '\'' | '=' | '<' | '>' | '`')
+      }
+
+      let start = match self.chars.peek() {
+        Some((i, c)) if is_unquoted_attr_value_char(*c) => *i,
+        _ => return Err(self.emit_error(SyntaxErrorKind::ExpectAttrValue)),
+      };
+
+      let mut end = start;
+      loop {
+        match self.chars.peek() {
+          Some((i, '{')) if matches!(self.language, Language::Jinja | Language::Vento) => {
+            end = *i;
+            let mut chars = self.chars.clone();
+            chars.next();
+            if chars.next_if(|(_, c)| *c == '{').is_some() {
+              // We use inclusive range when returning string,
+              // so we need to substract 1 here.
+              end += self.parse_mustache_interpolation()?.0.len() + "{{}}".len() - 1;
+            } else {
+              self.chars.next();
+            }
+          }
+          Some((i, c)) if is_unquoted_attr_value_char(*c) => {
+            end = *i;
+            self.chars.next();
+          }
+          _ => break,
+        }
+      }
+
+      Ok((unsafe { self.source.get_unchecked(start..=end) }, start))
+    }
+  }
+
+  fn parse_comment(&mut self) -> PResult<Comment<'s>> {
+    let Some((start, _)) = self
+      .chars
+      .next_if(|(_, c)| *c == '<')
+      .and_then(|_| self.chars.next_if(|(_, c)| *c == '!'))
+      .and_then(|_| self.chars.next_if(|(_, c)| *c == '-'))
+      .and_then(|_| self.chars.next_if(|(_, c)| *c == '-'))
+    else {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectComment));
+    };
+    let start = start + 1;
+
+    let mut end = start;
+    loop {
+      match self.chars.next() {
+        Some((i, '-')) => {
+          let mut chars = self.chars.clone();
+          if chars
+            .next_if(|(_, c)| *c == '-')
+            .and_then(|_| chars.next_if(|(_, c)| *c == '>'))
+            .is_some()
+          {
+            end = i;
+            self.chars = chars;
+            break;
+          }
+        }
+        Some(..) => continue,
+        None => break,
+      }
+    }
+
+    Ok(Comment {
+      raw: unsafe { self.source.get_unchecked(start..end) },
+    })
+  }
+
+  fn parse_doctype(&mut self) -> PResult<Doctype<'s>> {
+    let keyword_start = if let Some((start, _)) = self
+      .chars
+      .next_if(|(_, c)| *c == '<')
+      .and_then(|_| self.chars.next_if(|(_, c)| *c == '!'))
+    {
+      start + 1
+    } else {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectDoctype));
+    };
+    let keyword = if let Some((end, _)) = self
+      .chars
+      .next_if(|(_, c)| c.eq_ignore_ascii_case(&'d'))
+      .and_then(|_| self.chars.next_if(|(_, c)| c.eq_ignore_ascii_case(&'o')))
+      .and_then(|_| self.chars.next_if(|(_, c)| c.eq_ignore_ascii_case(&'c')))
+      .and_then(|_| self.chars.next_if(|(_, c)| c.eq_ignore_ascii_case(&'t')))
+      .and_then(|_| self.chars.next_if(|(_, c)| c.eq_ignore_ascii_case(&'y')))
+      .and_then(|_| self.chars.next_if(|(_, c)| c.eq_ignore_ascii_case(&'p')))
+      .and_then(|_| self.chars.next_if(|(_, c)| c.eq_ignore_ascii_case(&'e')))
+    {
+      unsafe { self.source.get_unchecked(keyword_start..end + 1) }
+    } else {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectDoctype));
+    };
+    self.skip_ws();
+
+    let value_start = if let Some((start, _)) = self.chars.peek() {
+      *start
+    } else {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectDoctype));
+    };
+    while self.chars.next_if(|(_, c)| *c != '>').is_some() {}
+
+    if let Some((value_end, _)) = self.chars.next_if(|(_, c)| *c == '>') {
+      Ok(Doctype {
+        keyword,
+        value: unsafe { self.source.get_unchecked(value_start..value_end) }.trim_end(),
+      })
+    } else {
+      Err(self.emit_error(SyntaxErrorKind::ExpectDoctype))
+    }
+  }
+
+  fn parse_element(&mut self) -> PResult<Element<'s>> {
+    let Some(..) = self.chars.next_if(|(_, c)| *c == '<') else {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectElement));
+    };
+    let tag_name = self.parse_tag_name()?;
+    let void_element = helpers::is_void_element(tag_name, self.language);
+
+    let mut attrs = vec![];
+    let mut first_attr_same_line = true;
+    loop {
+      match self.chars.peek() {
+        Some((_, '/')) => {
+          self.chars.next();
+          if self.chars.next_if(|(_, c)| *c == '>').is_some() {
+            return Ok(Element {
+              tag_name,
+              attrs,
+              first_attr_same_line,
+              children: vec![],
+              self_closing: true,
+              void_element,
+            });
+          }
+          return Err(self.emit_error(SyntaxErrorKind::ExpectSelfCloseTag));
+        }
+        Some((_, '>')) => {
+          self.chars.next();
+          if void_element {
+            return Ok(Element {
+              tag_name,
+              attrs,
+              first_attr_same_line,
+              children: vec![],
+              self_closing: false,
+              void_element,
+            });
+          }
+          break;
+        }
+        Some((_, '\n')) => {
+          if attrs.is_empty() {
+            first_attr_same_line = false;
+          }
+          self.chars.next();
+        }
+        Some((_, c)) if c.is_ascii_whitespace() => {
+          self.chars.next();
+        }
+        _ => {
+          attrs.push(self.parse_attr()?);
+        }
+      }
+    }
+
+    let mut children = vec![];
+    if tag_name.eq_ignore_ascii_case("script")
+      || tag_name.eq_ignore_ascii_case("style")
+      || tag_name.eq_ignore_ascii_case("pre")
+      || tag_name.eq_ignore_ascii_case("textarea")
+    {
+      let text_node = self.parse_raw_text_node(tag_name)?;
+      let raw = text_node.raw;
+      if !raw.is_empty() {
+        children.push(Node {
+          kind: NodeKind::Text(text_node),
+          raw,
+        });
+      }
+    }
+
+    loop {
+      match self.chars.peek() {
+        Some((_, '<')) => {
+          let mut chars = self.chars.clone();
+          chars.next();
+          if let Some((pos, _)) = chars.next_if(|(_, c)| *c == '/') {
+            self.chars = chars;
+            let close_tag_name = self.parse_tag_name()?;
+            if !close_tag_name.eq_ignore_ascii_case(tag_name) {
+              return Err(self.emit_error_with_pos(SyntaxErrorKind::ExpectCloseTag, pos));
+            }
+            self.skip_ws();
+            if self.chars.next_if(|(_, c)| *c == '>').is_some() {
+              break;
+            }
+            return Err(self.emit_error(SyntaxErrorKind::ExpectCloseTag));
+          }
+          children.push(self.parse_node()?);
+        }
+        Some(..) => {
+          if tag_name.eq_ignore_ascii_case("script")
+            || tag_name.eq_ignore_ascii_case("style")
+            || tag_name.eq_ignore_ascii_case("pre")
+            || tag_name.eq_ignore_ascii_case("textarea")
+          {
+            let text_node = self.parse_raw_text_node(tag_name)?;
+            let raw = text_node.raw;
+            if !raw.is_empty() {
+              children.push(Node {
+                kind: NodeKind::Text(text_node),
+                raw,
+              });
+            }
+          } else {
+            children.push(self.parse_node()?);
+          }
+        }
+        None => return Err(self.emit_error(SyntaxErrorKind::ExpectCloseTag)),
+      }
+    }
+
+    Ok(Element {
+      tag_name,
+      attrs,
+      first_attr_same_line,
+      children,
+      self_closing: false,
+      void_element,
+    })
+  }
+
+  fn parse_front_matter(&mut self) -> PResult<FrontMatter<'s>> {
+    let Some((start, _)) = self
+      .chars
+      .next_if(|(_, c)| *c == '-')
+      .and_then(|_| self.chars.next_if(|(_, c)| *c == '-'))
+      .and_then(|_| self.chars.next_if(|(_, c)| *c == '-'))
+    else {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectFrontMatter));
+    };
+    let start = start + 1;
+
+    let mut pair_stack = vec![];
+    let mut end = start;
+    loop {
+      match self.chars.next() {
+        Some((i, '-')) if pair_stack.is_empty() => {
+          let mut chars = self.chars.clone();
+          if chars
+            .next_if(|(_, c)| *c == '-')
+            .and_then(|_| chars.next_if(|(_, c)| *c == '-'))
+            .is_some()
+          {
+            end = i;
+            self.chars = chars;
+            break;
+          }
+        }
+        Some((_, c @ '\'' | c @ '"' | c @ '`')) => {
+          let last = pair_stack.last();
+          if last.is_some_and(|last| *last == c) {
+            pair_stack.pop();
+          } else if matches!(last, Some('$' | '{') | None) {
+            pair_stack.push(c);
+          }
+        }
+        Some((_, '$')) if matches!(pair_stack.last(), Some('`')) => {
+          if self.chars.next_if(|(_, c)| *c == '{').is_some() {
+            pair_stack.push('$');
+          }
+        }
+        Some((_, '{')) if matches!(pair_stack.last(), Some('$' | '{') | None) => {
+          pair_stack.push('{');
+        }
+        Some((_, '}')) if matches!(pair_stack.last(), Some('$' | '{')) => {
+          pair_stack.pop();
+        }
+        Some((_, '/')) if !matches!(pair_stack.last(), Some('\'' | '"' | '`' | '/' | '*')) => {
+          if let Some((_, c)) = self.chars.next_if(|(_, c)| *c == '/' || *c == '*') {
+            pair_stack.push(c);
+          }
+        }
+        Some((_, '\n')) => {
+          if let Some('/') = pair_stack.last() {
+            pair_stack.pop();
+          }
+        }
+        Some((_, '*')) => {
+          if self
+            .chars
+            .next_if(|(_, c)| *c == '/' && matches!(pair_stack.last(), Some('*')))
+            .is_some()
+          {
+            pair_stack.pop();
+          }
+        }
+        Some((_, '\\')) if matches!(pair_stack.last(), Some('\'' | '"' | '`')) => {
+          self.chars.next();
+        }
+        Some(..) => continue,
+        None => break,
+      }
+    }
+
+    self.state.has_front_matter = true;
+    Ok(FrontMatter {
+      raw: unsafe { self.source.get_unchecked(start..end) },
+      start,
+    })
+  }
+
+  fn parse_identifier(&mut self) -> PResult<&'s str> {
+    fn is_identifier_char(c: char) -> bool {
+      c.is_ascii_alphanumeric() || c == '-' || c == '_' || !c.is_ascii() || c == '\\'
+    }
+
+    let Some((start, _)) = self.chars.next_if(|(_, c)| is_identifier_char(*c)) else {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectIdentifier));
+    };
+    let mut end = start;
+
+    while let Some((i, _)) = self.chars.next_if(|(_, c)| is_identifier_char(*c)) {
+      end = i;
+    }
+
+    unsafe { Ok(self.source.get_unchecked(start..=end)) }
+  }
+
+  /// This will consume the open and close char.
+  fn parse_inside(&mut self, open: char, close: char, inclusive: bool) -> PResult<&'s str> {
+    let Some(start) =
+      self.chars.next_if(|(_, c)| *c == open).map(
+        |(i, c)| {
+          if inclusive {
+            i
+          } else {
+            i + c.len_utf8()
+          }
+        },
+      )
+    else {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectChar(open)));
+    };
+    let mut end = start;
+    let mut stack = 0u8;
+    for (i, c) in self.chars.by_ref() {
+      if c == open {
+        stack += 1;
+      } else if c == close {
+        if stack == 0 {
+          end = if inclusive { i + close.len_utf8() } else { i };
+          break;
+        }
+        stack -= 1;
+      }
+    }
+    Ok(unsafe { self.source.get_unchecked(start..end) })
+  }
+
+  fn parse_jinja_block_children<T, F>(&mut self, children_parser: &mut F) -> PResult<Vec<T>>
+  where
+    T: HasJinjaFlowControl<'s>,
+    F: FnMut(&mut Self) -> PResult<T>,
+  {
+    let mut children = vec![];
+    loop {
+      match self.chars.peek() {
+        Some((_, '{')) => {
+          let mut chars = self.chars.clone();
+          chars.next();
+          if chars.next_if(|(_, c)| *c == '%').is_some() {
+            break;
+          }
+          children.push(children_parser(self)?);
+        }
+        Some(..) => {
+          children.push(children_parser(self)?);
+        }
+        None => return Err(self.emit_error(SyntaxErrorKind::ExpectJinjaBlockEnd)),
+      }
+    }
+    Ok(children)
+  }
+
+  fn parse_mustache_interpolation(&mut self) -> PResult<(&'s str, usize)> {
+    let Some((start, _)) = self
+      .chars
+      .next_if(|(_, c)| *c == '{')
+      .and_then(|_| self.chars.next_if(|(_, c)| *c == '{'))
+    else {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectMustacheInterpolation));
+    };
+    let start = start + 1;
+
+    let mut braces_stack = 0usize;
+    let mut end = start;
+    loop {
+      match self.chars.next() {
+        Some((_, '{')) => braces_stack += 1,
+        Some((i, '}')) => {
+          if braces_stack == 0 {
+            if self.chars.next_if(|(_, c)| *c == '}').is_some() {
+              end = i;
+              break;
+            }
+          } else {
+            braces_stack -= 1;
+          }
+        }
+        Some(..) => continue,
+        None => break,
+      }
+    }
+
+    Ok((unsafe { self.source.get_unchecked(start..end) }, start))
+  }
+
+  fn parse_native_attr(&mut self) -> PResult<NativeAttribute<'s>> {
+    let name = self.parse_attr_name()?;
+    self.skip_ws();
+    let mut quote = None;
+    let value = if self.chars.next_if(|(_, c)| *c == '=').is_some() {
+      self.skip_ws();
+      quote = self
+        .chars
+        .peek()
+        .and_then(|(_, c)| (*c == '\'' || *c == '"').then_some(*c));
+      Some(self.parse_attr_value()?)
+    } else {
+      None
+    };
+    Ok(NativeAttribute { name, value, quote })
+  }
+
+  fn parse_node(&mut self) -> PResult<Node<'s>> {
+    let (kind, raw) = self.with_taken(Parser::parse_node_kind)?;
+    Ok(Node { kind, raw })
+  }
+
+  fn parse_node_kind(&mut self) -> PResult<NodeKind<'s>> {
+    match self.chars.peek() {
+      Some((_, '<')) => {
+        let mut chars = self.chars.clone();
+        chars.next();
+        match chars.next() {
+          Some((_, c))
+            if is_html_tag_name_char(c) || is_special_tag_name_char(c, self.language) =>
+          {
+            self.parse_element().map(NodeKind::Element)
+          }
+          Some((_, '!')) => {
+            if matches!(
+              self.language,
+              Language::Html | Language::Astro | Language::Jinja | Language::Vento
+            ) {
+              self
+                .try_parse(Parser::parse_comment)
+                .map(NodeKind::Comment)
+                .or_else(|_| self.try_parse(Parser::parse_doctype).map(NodeKind::Doctype))
+                .or_else(|_| self.parse_text_node().map(NodeKind::Text))
+            } else {
+              self.parse_comment().map(NodeKind::Comment)
+            }
+          }
+          _ => self.parse_text_node().map(NodeKind::Text),
+        }
+      }
+      Some((_, '{')) => {
+        let mut chars = self.chars.clone();
+        chars.next();
+        match chars.next() {
+          Some((_, '{'))
+            if matches!(
+              self.language,
+              Language::Vue | Language::Jinja | Language::Angular
+            ) =>
+          {
+            self
+              .parse_mustache_interpolation()
+              .map(|(expr, start)| match self.language {
+                Language::Vue => NodeKind::VueInterpolation(VueInterpolation { expr, start }),
+                Language::Jinja => NodeKind::JinjaInterpolation(JinjaInterpolation { expr }),
+                Language::Angular => {
+                  NodeKind::AngularInterpolation(AngularInterpolation { expr, start })
+                }
+                _ => unreachable!(),
+              })
+          }
+          Some((_, '{')) if matches!(self.language, Language::Vento) => {
+            self.parse_vento_tag_or_block(None)
+          }
+          Some((_, '#')) if matches!(self.language, Language::Svelte) => match chars.next() {
+            Some((_, 'i')) => self.parse_svelte_if_block().map(NodeKind::SvelteIfBlock),
+            Some((_, 'e')) => self
+              .parse_svelte_each_block()
+              .map(NodeKind::SvelteEachBlock),
+            Some((_, 'a')) => self
+              .parse_svelte_await_block()
+              .map(NodeKind::SvelteAwaitBlock),
+            Some((_, 'k')) => self.parse_svelte_key_block().map(NodeKind::SvelteKeyBlock),
+            Some((_, 's')) => self
+              .parse_svelte_snippet_block()
+              .map(NodeKind::SvelteSnippetBlock),
+            _ => self.parse_text_node().map(NodeKind::Text),
+          },
+          Some((_, '#')) if matches!(self.language, Language::Jinja) => {
+            self.parse_jinja_comment().map(NodeKind::JinjaComment)
+          }
+          Some((_, '@')) => self.parse_svelte_at_tag().map(NodeKind::SvelteAtTag),
+          Some((_, '%')) if matches!(self.language, Language::Jinja) => {
+            self.parse_jinja_tag_or_block(None, &mut Parser::parse_node)
+          }
+          _ => match self.language {
+            Language::Svelte => self
+              .parse_svelte_interpolation()
+              .map(NodeKind::SvelteInterpolation),
+            Language::Astro => self.parse_astro_expr().map(NodeKind::AstroExpr),
+            _ => self.parse_text_node().map(NodeKind::Text),
+          },
+        }
+      }
+      Some((_, '-'))
+        if matches!(
+          self.language,
+          Language::Astro | Language::Jinja | Language::Vento
+        ) && !self.state.has_front_matter =>
+      {
+        let mut chars = self.chars.clone();
+        chars.next();
+        if let Some(((_, '-'), (_, '-'))) = chars.next().zip(chars.next()) {
+          self.parse_front_matter().map(NodeKind::FrontMatter)
+        } else {
+          self.parse_text_node().map(NodeKind::Text)
+        }
+      }
+      Some((_, '@')) if matches!(self.language, Language::Angular) => {
+        let mut chars = self.chars.clone();
+        chars.next();
+        match chars.next() {
+          Some((_, 'i')) => self.parse_angular_if().map(NodeKind::AngularIf),
+          Some((_, 'f')) => self.parse_angular_for().map(NodeKind::AngularFor),
+          Some((_, 's')) => self.parse_angular_switch().map(NodeKind::AngularSwitch),
+          Some((_, 'l')) => self.parse_angular_let().map(NodeKind::AngularLet),
+          _ => self.parse_text_node().map(NodeKind::Text),
+        }
+      }
+      Some(..) => self.parse_text_node().map(NodeKind::Text),
+      None => Err(self.emit_error(SyntaxErrorKind::ExpectElement)),
+    }
+  }
+
+  fn parse_raw_text_node(&mut self, tag_name: &str) -> PResult<TextNode<'s>> {
+    let start = self
+      .chars
+      .peek()
+      .map(|(i, _)| *i)
+      .unwrap_or(self.source.len());
+
+    let allow_nested = tag_name.eq_ignore_ascii_case("pre");
+    let mut nested = 0u16;
+    let mut line_breaks = 0;
+    let end;
+    loop {
+      match self.chars.peek() {
+        Some((i, '<')) => {
+          let i = *i;
+          let mut chars = self.chars.clone();
+          chars.next();
+          if chars.next_if(|(_, c)| *c == '/').is_some()
+            && chars
+              .by_ref()
+              .zip(tag_name.chars())
+              .all(|((_, a), b)| a.eq_ignore_ascii_case(&b))
+          {
+            if nested == 0 {
+              end = i;
+              break;
+            } else {
+              nested -= 1;
+              self.chars = chars;
+              continue;
+            }
+          } else if allow_nested
+            && chars
+              .by_ref()
+              .zip(tag_name.chars())
+              .all(|((_, a), b)| a.eq_ignore_ascii_case(&b))
+          {
+            nested += 1;
+            self.chars = chars;
+            continue;
+          }
+          self.chars.next();
+        }
+        Some((_, c)) => {
+          if *c == '\n' {
+            line_breaks += 1;
+          }
+          self.chars.next();
+        }
+        None => {
+          end = self.source.len();
+          break;
+        }
+      }
+    }
+
+    Ok(TextNode {
+      raw: unsafe { self.source.get_unchecked(start..end) },
+      line_breaks,
+      start,
+    })
+  }
+
+  pub fn parse_root(&mut self) -> PResult<Root<'s>> {
+    let mut children = vec![];
+    while self.chars.peek().is_some() {
+      children.push(self.parse_node()?);
+    }
+
+    Ok(Root { children })
+  }
+
+  fn parse_tag_name(&mut self) -> PResult<&'s str> {
+    let (start, mut end) = match self.chars.peek() {
+      Some((i, c)) if is_html_tag_name_char(*c) => {
+        let c = *c;
+        let start = *i;
+        self.chars.next();
+        (start, start + c.len_utf8())
+      }
+      Some((i, '{')) if matches!(self.language, Language::Jinja) => (*i, *i + 1),
+      Some((_, '>')) if matches!(self.language, Language::Astro) => {
+        // Astro allows fragment
+        return Ok("");
+      }
+      _ => return Err(self.emit_error(SyntaxErrorKind::ExpectTagName)),
+    };
+
+    while let Some((i, c)) = self.chars.peek() {
+      if is_html_tag_name_char(*c) {
+        end = *i + c.len_utf8();
+        self.chars.next();
+      } else if *c == '{' && matches!(self.language, Language::Jinja) {
+        let current_i = *i;
+        let mut chars = self.chars.clone();
+        chars.next();
+        if chars.next_if(|(_, c)| *c == '{').is_some() {
+          end = current_i + self.parse_mustache_interpolation()?.0.len() + "{{}}".len();
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+
+    unsafe { Ok(self.source.get_unchecked(start..end)) }
+  }
+
+  fn parse_text_node(&mut self) -> PResult<TextNode<'s>> {
+    let Some((start, first_char)) = self.chars.next_if(|(_, c)| {
+      if matches!(
+        self.language,
+        Language::Vue | Language::Svelte | Language::Jinja | Language::Vento | Language::Angular
+      ) {
+        *c != '{'
+      } else {
+        true
+      }
+    }) else {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectTextNode));
+    };
+
+    if matches!(
+      self.language,
+      Language::Vue | Language::Jinja | Language::Vento | Language::Angular
+    ) && first_char == '{'
+      && matches!(self.chars.peek(), Some((_, '{')))
+    {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectTextNode));
+    }
+
+    let mut line_breaks = if first_char == '\n' { 1 } else { 0 };
+    let end;
+    loop {
+      match self.chars.peek() {
+        Some((i, '{')) => match self.language {
+          Language::Html => {
+            self.chars.next();
+          }
+          Language::Vue | Language::Vento | Language::Angular => {
+            let i = *i;
+            let mut chars = self.chars.clone();
+            chars.next();
+            if chars.next_if(|(_, c)| *c == '{').is_some() {
+              end = i;
+              break;
+            }
+            self.chars.next();
+          }
+          Language::Svelte | Language::Astro => {
+            end = *i;
+            break;
+          }
+          Language::Jinja => {
+            let i = *i;
+            let mut chars = self.chars.clone();
+            chars.next();
+            if chars
+              .next_if(|(_, c)| *c == '%' || *c == '{' || *c == '#')
+              .is_some()
+            {
+              end = i;
+              break;
+            }
+            self.chars.next();
+          }
+        },
+        Some((i, '<')) => {
+          let i = *i;
+          let mut chars = self.chars.clone();
+          chars.next();
+          match chars.next() {
+            Some((_, c))
+              if is_html_tag_name_char(c)
+                || is_special_tag_name_char(c, self.language)
+                || c == '/'
+                || c == '!' =>
+            {
+              end = i;
+              break;
+            }
+            _ => {
+              self.chars.next();
+            }
+          }
+        }
+        Some((i, '-'))
+          if matches!(self.language, Language::Astro) && !self.state.has_front_matter =>
+        {
+          let i = *i;
+          let mut chars = self.chars.clone();
+          chars.next();
+          if let Some(((_, '-'), (_, '-'))) = chars.next().zip(chars.next()) {
+            end = i;
+            break;
+          }
+          self.chars.next();
+        }
+        Some((i, '}' | '@')) if matches!(self.language, Language::Angular) => {
+          end = *i;
+          break;
+        }
+        Some((_, c)) => {
+          if *c == '\n' {
+            line_breaks += 1;
+          }
+          self.chars.next();
+        }
+        None => {
+          end = self.source.len();
+          break;
+        }
+      }
+    }
+
+    Ok(TextNode {
+      raw: unsafe { self.source.get_unchecked(start..end) },
+      line_breaks,
+      start,
+    })
+  }
+
+  fn parse_vue_directive(&mut self) -> PResult<VueDirective<'s>> {
+    let name = match self.chars.peek() {
+      Some((_, ':')) => {
+        self.chars.next();
+        ":"
+      }
+      Some((_, '@')) => {
+        self.chars.next();
+        "@"
+      }
+      Some((_, '#')) => {
+        self.chars.next();
+        "#"
+      }
+      Some((_, 'v')) => {
+        let mut chars = self.chars.clone();
+        chars.next();
+        if chars.next_if(|(_, c)| *c == '-').is_some() {
+          self.chars = chars;
+          self.parse_identifier()?
+        } else {
+          return Err(self.emit_error(SyntaxErrorKind::ExpectVueDirective));
+        }
+      }
+      _ => return Err(self.emit_error(SyntaxErrorKind::ExpectVueDirective)),
+    };
+
+    let arg_and_modifiers = if matches!(name, ":" | "@" | "#")
+      || self
+        .chars
+        .peek()
+        .map(|(_, c)| is_attr_name_char(*c))
+        .unwrap_or_default()
+    {
+      Some(self.parse_attr_name()?)
+    } else {
+      None
+    };
+
+    self.skip_ws();
+    let value = if self.chars.next_if(|(_, c)| *c == '=').is_some() {
+      self.skip_ws();
+      Some(self.parse_attr_value()?)
+    } else {
+      None
+    };
+
+    Ok(VueDirective {
+      name,
+      arg_and_modifiers,
+      value,
+    })
+  }
 }
+
+/// Returns true if the provided character is a valid HTML tag name character.
+fn is_html_tag_name_char(c: char) -> bool {
+  c.is_ascii_alphanumeric()
+    || c == '-'
+    || c == '_'
+    || c == '.'
+    || c == ':'
+    || !c.is_ascii()
+    || c == '\\'
+}
+
+/// Checks whether a character is valid in an HTML tag name, for specific template languages.
+///
+/// For example:
+/// - Astro allows '>' in tag names (for fragments)
+/// - Jinja allows '{' for template expressions like <{{ tag_name }}>
+fn is_special_tag_name_char(c: char, language: Language) -> bool {
+  match language {
+    Language::Astro => c == '>',
+    Language::Jinja => c == '{',
+    _ => false,
+  }
+}
+
+fn is_attr_name_char(c: char) -> bool {
+  !matches!(c, '"' | '\'' | '>' | '/' | '=') && !c.is_ascii_whitespace()
+}
+
+pub type PResult<T> = Result<T, SyntaxError>;

@@ -2,6 +2,7 @@
 
 mod ast;
 mod error;
+mod helpers;
 mod parser;
 mod state;
 

@@ -1,86 +1,131 @@
-//! 错误处理模块，定义解析过程中可能出现的错误类型
+use std::{borrow::Cow, error::Error, fmt};
 
-use crate::ast::Position;
-use std::fmt;
-
-/// 解析错误的枚举类型
-#[derive(Debug, Clone)]
-pub enum ParseError {
-  /// 当源码提前结束时触发
-  UnexpectedEOF {
-    expected: String,
-    position: Position,
-  },
-  /// 当遇到不匹配的标签时触发
-  MismatchedTag {
-    expected: String,
-    found: String,
-    position: Position,
-  },
-  /// 当属性格式不正确时触发
-  InvalidAttribute { name: String, position: Position },
-  /// 当一个元素未被正确闭合时触发
-  UnclosedElement {
-    tag_name: String,
-    position: Position,
-  },
-  /// 当表达式未被正确闭合时触发
-  UnclosedExpression { position: Position },
-  /// 其他类型的错误
-  GeneralError { message: String, position: Position },
+#[derive(Clone, Debug)]
+/// Syntax error when parsing tags, not `<script>` or `<style>` tag.
+pub struct SyntaxError {
+  pub kind: SyntaxErrorKind,
+  pub pos: usize,
+  pub line: usize,
+  pub column: usize,
 }
 
-impl fmt::Display for ParseError {
+#[derive(Clone, Debug)]
+pub enum SyntaxErrorKind {
+  ExpectAttrName,
+  ExpectAttrValue,
+  ExpectChar(char),
+  ExpectCloseTag,
+  ExpectComment,
+  ExpectDoctype,
+  ExpectElement,
+  ExpectFrontMatter,
+  ExpectIdentifier,
+  ExpectJinjaBlockEnd,
+  ExpectJinjaTag,
+  ExpectKeyword(&'static str),
+  ExpectMustacheInterpolation,
+  ExpectSelfCloseTag,
+  ExpectSvelteAtTag,
+  ExpectSvelteAttr,
+  ExpectSvelteAwaitBlock,
+  ExpectSvelteBlockEnd,
+  ExpectSvelteCatchBlock,
+  ExpectSvelteEachBlock,
+  ExpectSvelteElseIfBlock,
+  ExpectSvelteIfBlock,
+  ExpectSvelteInterpolation,
+  ExpectSvelteKeyBlock,
+  ExpectSvelteSnippetBlock,
+  ExpectSvelteThenBlock,
+  ExpectTagName,
+  ExpectTextNode,
+  ExpectVentoBlockEnd,
+  ExpectVueDirective,
+}
+
+impl fmt::Display for SyntaxErrorKind {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let reason: Cow<_> = match self {
+      SyntaxErrorKind::ExpectAngularFor => "expected Angular `@for`".into(),
+      SyntaxErrorKind::ExpectAngularIf => "expected Angular `@if`".into(),
+      SyntaxErrorKind::ExpectAngularLet => "expected Angular `@let`".into(),
+      SyntaxErrorKind::ExpectAngularSwitch => "expected Angular `@switch`".into(),
+      SyntaxErrorKind::ExpectAstroAttr => "expected Astro attribute".into(),
+      SyntaxErrorKind::ExpectAstroExpr => "expected Astro expression".into(),
+      SyntaxErrorKind::ExpectAttrName => "expected attribute name".into(),
+      SyntaxErrorKind::ExpectAttrValue => "expected attribute value".into(),
+      SyntaxErrorKind::ExpectChar(c) => format!("expected char '{c}'").into(),
+      SyntaxErrorKind::ExpectCloseTag => "expected close tag".into(),
+      SyntaxErrorKind::ExpectComment => "expected comment".into(),
+      SyntaxErrorKind::ExpectDoctype => "expected HTML doctype".into(),
+      SyntaxErrorKind::ExpectElement => "expected element".into(),
+      SyntaxErrorKind::ExpectFrontMatter => "expected front matter".into(),
+      SyntaxErrorKind::ExpectIdentifier => "expected identifier".into(),
+      SyntaxErrorKind::ExpectJinjaBlockEnd => "expected Jinja block end".into(),
+      SyntaxErrorKind::ExpectJinjaTag => "expected Jinja tag".into(),
+      SyntaxErrorKind::ExpectKeyword(keyword) => format!("expected keyword '{}'", keyword).into(),
+      SyntaxErrorKind::ExpectMustacheInterpolation => "expected mustache-like interpolation".into(),
+      SyntaxErrorKind::ExpectSelfCloseTag => "expected self close tag".into(),
+      SyntaxErrorKind::ExpectSvelteAtTag => "expected Svelte `{@` tag".into(),
+      SyntaxErrorKind::ExpectSvelteAttr => "expected Svelte attribute".into(),
+      SyntaxErrorKind::ExpectSvelteAwaitBlock => "expected Svelte await block".into(),
+      SyntaxErrorKind::ExpectSvelteBlockEnd => "expected end of Svelte block".into(),
+      SyntaxErrorKind::ExpectSvelteCatchBlock => "expected Svelte catch block".into(),
+      SyntaxErrorKind::ExpectSvelteEachBlock => "expected Svelte each block".into(),
+      SyntaxErrorKind::ExpectSvelteElseIfBlock => "expected Svelte else if block".into(),
+      SyntaxErrorKind::ExpectSvelteIfBlock => "expected Svelte if block".into(),
+      SyntaxErrorKind::ExpectSvelteInterpolation => "expected Svelte interpolation".into(),
+      SyntaxErrorKind::ExpectSvelteKeyBlock => "expected Svelte key block".into(),
+      SyntaxErrorKind::ExpectSvelteSnippetBlock => "expected Svelte snippet block".into(),
+      SyntaxErrorKind::ExpectSvelteThenBlock => "expected Svelte then block".into(),
+      SyntaxErrorKind::ExpectTagName => "expected tag name".into(),
+      SyntaxErrorKind::ExpectTextNode => "expected text node".into(),
+      SyntaxErrorKind::ExpectVentoBlockEnd => "expected Vento block end".into(),
+      SyntaxErrorKind::ExpectVueDirective => "expected Vue directive".into(),
+    };
+
+    write!(f, "{reason}")
+  }
+}
+
+impl fmt::Display for SyntaxError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(
+      f,
+      "syntax error '{}' at line {}, column {}",
+      self.kind, self.line, self.column
+    )
+  }
+}
+
+impl Error for SyntaxError {}
+
+#[derive(Debug)]
+/// The error type for markup_fmt.
+pub enum FormatError<E> {
+  /// Syntax error when parsing tags.
+  Syntax(SyntaxError),
+  /// Error from external formatter, for example,
+  /// there're errors when formatting the `<script>` or `<style>` tag.
+  External(Vec<E>),
+}
+
+impl<E> fmt::Display for FormatError<E>
+where
+  E: fmt::Display,
+{
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      ParseError::UnexpectedEOF { expected, position } => {
-        write!(
-          f,
-          "意外的文件结束，期望 {} 在位置 {}:{}",
-          expected, position.line, position.column
-        )
-      }
-      ParseError::MismatchedTag {
-        expected,
-        found,
-        position,
-      } => {
-        write!(
-          f,
-          "标签不匹配，期望 </{}> 但找到 </{}> 在位置 {}:{}",
-          expected, found, position.line, position.column
-        )
-      }
-      ParseError::InvalidAttribute { name, position } => {
-        write!(
-          f,
-          "无效的属性 '{}' 在位置 {}:{}",
-          name, position.line, position.column
-        )
-      }
-      ParseError::UnclosedElement { tag_name, position } => {
-        write!(
-          f,
-          "未闭合的元素 '{}' 在位置 {}:{}",
-          tag_name, position.line, position.column
-        )
-      }
-      ParseError::UnclosedExpression { position } => {
-        write!(
-          f,
-          "未闭合的表达式 '{{{{' 在位置 {}:{}",
-          position.line, position.column
-        )
-      }
-      ParseError::GeneralError { message, position } => {
-        write!(
-          f,
-          "{} 在位置 {}:{}",
-          message, position.line, position.column
-        )
+      FormatError::Syntax(e) => e.fmt(f),
+      FormatError::External(errors) => {
+        writeln!(f, "failed to format code with external formatter:")?;
+        for error in errors {
+          writeln!(f, "{error}")?;
+        }
+        Ok(())
       }
     }
   }
 }
 
-impl std::error::Error for ParseError {}
+impl<E> Error for FormatError<E> where E: Error {}
