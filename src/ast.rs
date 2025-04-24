@@ -41,32 +41,24 @@ pub enum Value {
 
 #[derive(Debug, Clone)]
 #[napi(object)]
-pub struct Tag {
-  pub value: String,
-  // 位置信息
-  pub location: Location,
-}
-
-#[derive(Debug, Clone)]
-#[napi(object)]
 pub struct Root {
   pub children: Vec<Node>,
-  pub location: Location,
+  pub loc: Range,
 }
 
 #[derive(Debug, Clone)]
 #[napi(object)]
 pub struct StaticAttribute {
   pub name: String,
-  pub value: String,
-  pub quote: Option<char>,
+  pub value: Option<String>,
+  pub loc: Range,
 }
 #[derive(Debug, Clone)]
 #[napi(object)]
 pub struct DynamicAttribute {
   pub name: String,
   pub value: Vec<String>,
-  pub quote: Option<char>,
+  pub loc: Range,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +98,7 @@ pub struct Element {
   pub children: Vec<Node>,
   pub self_closing: bool,
   pub first_attr_same_line: bool,
+  pub loc: Range,
 }
 
 /// AST节点类型，代表WXML文档中的各种元素
