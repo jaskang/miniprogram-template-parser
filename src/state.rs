@@ -1,196 +1,312 @@
-//! 解析状态模块，包含用于追踪解析过程的状态和工具函数
+use crate::{
+  ast::{Position, Range},
+  error::{SyntaxError, SyntaxErrorKind},
+};
 
-use crate::ast::Position;
-use crate::error::ParseError;
-
-// 解析状态，跟踪当前解析位置和上下文
-pub struct ParseState {
-  pub chars: Vec<char>,
-  // 字符索引
-  pub offset: u32,
-  // 行号
-  pub line: u32,
-  // 列号
-  pub column: u32,
-  // 错误列表
-  pub errors: Vec<ParseError>,
+/// Some meta information of the parsing.
+pub struct ParseState<'s> {
+  path: String,
+  whole_str: &'s str,
+  offset: usize,
+  line: usize,
+  column: usize,
+  warnings: Vec<SyntaxError>,
 }
 
-impl ParseState {
-  // 创建新的解析状态
-  pub fn new(source: &str) -> Self {
+impl<'s> ParseState<'s> {
+  /// Prepare a string for parsing.
+  ///
+  /// `path` and `position_offset` are used to adjust warning output.
+  pub fn new(path: &str, content: &'s str) -> Self {
+    let s = content;
+    let s = if s.len() >= u32::MAX as usize {
+      // log::error!("Source code too long. Truncated to `u32::MAX - 1` .");
+      &s[..(u32::MAX as usize - 1)]
+    } else {
+      s
+    };
     Self {
-      chars: source.chars().collect(),
+      path: path.to_string(),
+      whole_str: s,
       offset: 0,
-      line: 1,
-      column: 1,
-      errors: Vec::new(),
+      line: 0,
+      column: 0,
+      warnings: vec![],
     }
   }
 
-  // 记录错误
-  pub fn record_error(&mut self, error: ParseError) {
-    self.errors.push(error);
+  /// Add a new warning.
+  pub fn add_warning(&mut self, kind: SyntaxErrorKind, position: Position) {
+    self.warnings.push(SyntaxError {
+      kind,
+      offset: position.offset,
+      line: position.line,
+      column: position.column,
+    })
   }
 
-  // 获取当前位置
-  pub fn position(&self) -> Position {
-    Position {
-      offset: self.offset,
-      line: self.line,
-      column: self.column,
+  /// Add a new warning at the current position.
+  fn add_warning_at_current_position(&mut self, kind: SyntaxErrorKind) {
+    let pos = self.position();
+    self.add_warning(kind, pos)
+  }
+
+  /// List warnings.
+  pub fn warnings(&self) -> impl Iterator<Item = &SyntaxError> {
+    self.warnings.iter()
+  }
+
+  /// Extract and then clear all warnings.
+  pub fn take_warnings(&mut self) -> Vec<SyntaxError> {
+    std::mem::replace(&mut self.warnings, vec![])
+  }
+
+  fn cur_str(&self) -> &'s str {
+    &self.whole_str[self.offset..]
+  }
+
+  /// Whether the input is ended.
+  pub fn ended(&self) -> bool {
+    self.cur_str().len() == 0
+  }
+
+  /// Try parse with `f` , reverting the state if it returns `None` .
+  pub(crate) fn try_parse<T>(&mut self, f: impl FnOnce(&mut Self) -> Option<T>) -> Option<T> {
+    let prev = self.offset;
+    let prev_line = self.line;
+    let prev_column = self.column;
+    let ret = f(self);
+    if ret.is_none() {
+      self.offset = prev;
+      self.line = prev_line;
+      self.column = prev_column;
+    }
+    ret
+  }
+
+  fn skip_bytes(&mut self, count: usize) {
+    let skipped = &self.cur_str()[..count];
+    self.offset += count;
+    let line_wrap_count = skipped
+      .as_bytes()
+      .into_iter()
+      .filter(|x| **x == b'\n')
+      .count();
+    self.line += line_wrap_count;
+    if line_wrap_count > 0 {
+      let last_line_start = skipped.rfind('\n').unwrap() + 1;
+      self.column = skipped[last_line_start..].encode_utf16().count();
+    } else {
+      self.column += skipped.encode_utf16().count();
     }
   }
 
-  // 检查是否已经到达源码结尾
-  pub fn is_eof(&self) -> bool {
-    self.offset >= self.chars.len() as u32
+  pub(crate) fn skip_until_before(&mut self, until: &str) -> Option<&'s str> {
+    let s = self.cur_str();
+    if let Some(index) = s.find(until) {
+      let ret = &s[..index];
+      self.skip_bytes(index);
+      Some(ret)
+    } else {
+      self.skip_bytes(s.len());
+      None
+    }
   }
 
-  /**
-   * 消费当前字符并前进到下一个字符
-   */
-  pub fn consume(&mut self) -> Option<char> {
-    if self.is_eof() {
+  pub(crate) fn skip_until_after(&mut self, until: &str) -> Option<&'s str> {
+    let ret = self.skip_until_before(until);
+    if ret.is_some() {
+      self.skip_bytes(until.len());
+    }
+    ret
+  }
+
+  pub(crate) fn peek_chars(&mut self) -> impl 's + Iterator<Item = char> {
+    self.cur_str().chars()
+  }
+
+  pub(crate) fn peek_n<const N: usize>(&mut self) -> Option<[char; N]> {
+    let mut ret: [char; N] = ['\x00'; N];
+    let mut iter = self.peek_chars();
+    for i in 0..N {
+      ret[i] = iter.next()?;
+    }
+    Some(ret)
+  }
+
+  pub(crate) fn peek<const I: usize>(&mut self) -> Option<char> {
+    let mut iter = self.peek_chars();
+    for _ in 0..I {
+      iter.next()?;
+    }
+    iter.next()
+  }
+
+  pub(crate) fn peek_str(&mut self, s: &str) -> bool {
+    self.cur_str().starts_with(s)
+  }
+
+  fn consume_str_except_followed<const N: usize>(
+    &mut self,
+    s: &str,
+    excepts: [&str; N],
+  ) -> Option<Range> {
+    if !self.peek_str(s) {
       return None;
     }
-
-    let c = self.chars[self.offset as usize];
-    self.offset += 1;
-
-    // 更新行列信息
-    if c == '\n' {
-      self.line += 1;
-      self.column = 1;
-    } else {
-      self.column += 1;
-    }
-
-    Some(c)
-  }
-
-  // 消费指定数量的字符
-  pub fn consume_n(&mut self, n: u32) -> String {
-    let mut result = String::new();
-    let count = n.min(self.chars.len() as u32 - self.offset);
-
-    for _ in 0..count {
-      if let Some(c) = self.consume() {
-        result.push(c);
+    let s_followed = &self.cur_str()[s.len()..];
+    for except in excepts {
+      if s_followed.starts_with(except) {
+        return None;
       }
     }
-
-    result
+    let start = self.position();
+    self.skip_bytes(s.len());
+    let end = self.position();
+    Some(Range { start, end })
   }
 
-  /**
-   * 消费字符直到满足条件
-   */
-  pub fn consume_while<F>(&mut self, predicate: F) -> String
-  where
-    F: Fn(char) -> bool,
-  {
-    let start_pos = self.offset;
-    let mut end_pos = start_pos;
-
-    while end_pos < self.chars.len() as u32 && predicate(self.chars[end_pos as usize]) {
-      end_pos += 1;
+  fn consume_str_except_followed_char(
+    &mut self,
+    s: &str,
+    reject_followed: impl FnOnce(char) -> bool,
+  ) -> Option<Range> {
+    if !self.peek_str(s) {
+      return None;
     }
-
-    if start_pos == end_pos {
-      return String::new();
-    }
-
-    // 构建结果字符串
-    // let result: String = self.chars[start_pos..end_pos].iter().collect();
-    let result: String = self.pick_rang(start_pos, end_pos);
-
-    // 更新位置和行列信息
-    for c in &self.chars[start_pos as usize..end_pos as usize] {
-      self.offset += 1;
-      if *c == '\n' {
-        self.line += 1;
-        self.column = 1;
-      } else {
-        self.column += 1;
+    let s_followed = &self.cur_str()[s.len()..];
+    match s_followed.chars().next() {
+      None => {}
+      Some(ch) => {
+        if reject_followed(ch) {
+          return None;
+        }
       }
     }
-
-    result
+    let start = self.position();
+    self.skip_bytes(s.len());
+    let end = self.position();
+    Some(Range { start, end })
   }
 
-  // 跳过空白字符
-  pub fn skip_whitespace(&mut self) {
-    self.consume_while(|c| c.is_whitespace());
+  /// Consume the specified string if it matches the peek of the input.
+  pub(crate) fn consume_str(&mut self, s: &str) -> Option<Range> {
+    self.consume_str_except_followed(s, [])
   }
 
-  // 消费直到指定的字符串
-  pub fn consume_until(&mut self, target: &str) -> String {
-    let mut result = String::new();
-    let target_chars: Vec<char> = target.chars().collect();
-    let target_len = target_chars.len() as u32;
-
-    if target_len == 0 {
-      return result;
-    }
-
-    while !self.is_eof() {
-      if self.offset + target_len <= self.chars.len() as u32 {
-        let start = self.offset as usize;
-        let end = start + target_len as usize;
-        let window = &self.chars[start..end];
-        if window == target_chars.as_slice() {
+  fn next_char_as_str(&mut self) -> &'s str {
+    let s = self.cur_str();
+    if s.len() > 0 {
+      let mut i = 0;
+      loop {
+        i += 1;
+        if s.is_char_boundary(i) {
           break;
         }
       }
+      let ret = &s[..i];
+      self.skip_bytes(i);
+      ret
+    } else {
+      ""
+    }
+  }
 
-      if let Some(c) = self.consume() {
-        result.push(c);
+  pub(crate) fn next(&mut self) -> Option<char> {
+    let mut i = self.cur_str().char_indices();
+    let (_, ret) = i.next()?;
+    self.offset += match i.next() {
+      Some((p, _)) => p,
+      None => self.cur_str().len(),
+    };
+    if ret == '\n' {
+      self.line += 1;
+      self.column = 0;
+    } else {
+      self.column += ret.encode_utf16(&mut [0; 2]).len();
+    }
+    Some(ret)
+  }
+
+  pub(crate) fn skip_whitespace(&mut self) -> Option<Range> {
+    let mut start_pos = None;
+    let s = self.cur_str();
+    let mut i = s.char_indices();
+    self.offset += loop {
+      let Some((index, c)) = i.next() else {
+        break s.len();
+      };
+      if !is_template_whitespace(c) {
+        break index;
       }
-    }
-
-    result
+      if start_pos.is_none() {
+        start_pos = Some(self.position());
+      }
+      if c == '\n' {
+        self.line += 1;
+        self.column = 0;
+      } else {
+        self.column += c.encode_utf16(&mut [0; 2]).len();
+      }
+    };
+    start_pos.map(|x| Range {
+      start: x,
+      end: self.position(),
+    })
   }
 
-  pub fn pick(&self, index: u32) -> String {
-    let len = self.chars.len() as u32;
-    if index >= len {
-      return String::new();
+  pub(crate) fn skip_whitespace_with_js_comments(&mut self) -> Option<Range> {
+    let mut start_pos = None;
+    loop {
+      if let Some(range) = self.skip_whitespace() {
+        if start_pos.is_none() {
+          start_pos = Some(range.start);
+        }
+        continue;
+      }
+      if self.cur_str().starts_with("/*") {
+        if start_pos.is_none() {
+          start_pos = Some(self.position());
+        }
+        self.skip_bytes(2);
+        self.skip_until_after("*/");
+        continue;
+      }
+      break;
     }
-    self.chars[index as usize].to_string()
-  }
-  // 获取指定位置的字符串
-  pub fn pick_rang(&self, start: u32, end: u32) -> String {
-    let len = self.chars.len() as u32;
-    let start = start.min(len - 1);
-    let end = end.min(len - 1);
-    if start >= end {
-      String::new()
-    } else {
-      self.chars[start as usize..end as usize].iter().collect()
-    }
-  }
-
-  // 查看当前字符但不消费
-  pub fn peek(&self) -> Option<char> {
-    if self.is_eof() {
-      None
-    } else {
-      Some(self.chars[self.offset as usize])
-    }
+    start_pos.map(|x| Range {
+      start: x,
+      end: self.position(),
+    })
   }
 
-  // 查看接下来的n个字符但不消费
-  pub fn peek_n(&self, n: u32) -> String {
-    if self.is_eof() {
-      return String::new();
-    }
-    let end = (self.offset + n).min(self.chars.len() as u32);
-    self.pick_rang(self.offset, end)
+  /// Get the input slice by UTF-8 byte index range.
+  ///
+  /// Panics if the start or the end is not at a character boundary.
+  ///
+  pub(crate) fn code_slice(&self, range: [usize; 2]) -> &'s str {
+    &self.whole_str[range[0]..range[1]]
   }
 
-  // 查看接下来的字符是否匹配给定的字符串
-  pub fn peek_str(&self, s: &str) -> bool {
-    self.peek_n(s.len() as u32) == s
+  /// Get the current UTF-8 byte index in the input.
+  pub(crate) fn cur_offset(&self) -> u32 {
+    self.offset as u32
+  }
+
+  /// Get the current position.
+  pub(crate) fn position(&self) -> Position {
+    Position {
+      offset: self.cur_offset(),
+      line: self.line as u32,
+      column: self.column as u32,
+    }
+  }
+}
+
+const fn is_template_whitespace(c: char) -> bool {
+  match c {
+    ' ' => true,
+    '\x09'..='\x0D' => true,
+    _ => false,
   }
 }

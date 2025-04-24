@@ -7,7 +7,7 @@ use std::fmt;
 
 #[derive(Debug, Clone)]
 #[napi(object)]
-pub struct Location {
+pub struct Position {
   /// chars 索引, 从 0 开始
   pub offset: u32,
   /// 行号，从1开始
@@ -19,12 +19,11 @@ pub struct Location {
 #[derive(Debug, Clone)]
 #[napi(object)]
 pub struct Range {
-  pub start: Location,
-  pub end: Location,
-  pub source: String,
+  pub start: Position,
+  pub end: Position,
 }
 
-impl fmt::Display for Location {
+impl fmt::Display for Position {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "{} {}:{}", self.offset, self.line, self.column)
   }
@@ -34,9 +33,9 @@ impl fmt::Display for Location {
 #[napi]
 pub enum Value {
   /// 静态值
-  Text { content: String, location: Location },
+  Text { content: String, position: Position },
   /// 动态值
-  Expression { content: String, location: Location },
+  Expression { content: String, position: Position },
 }
 
 #[derive(Debug, Clone)]
