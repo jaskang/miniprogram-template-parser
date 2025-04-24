@@ -11,8 +11,9 @@ use crate::{
   ast::*,
   error::{SyntaxError, SyntaxErrorKind},
   helpers,
+  state::ParseState,
 };
-use std::{cmp::Ordering, iter::Peekable, ops::ControlFlow, str::CharIndices};
+use std::{cmp::Ordering, f32::consts::E, iter::Peekable, ops::ControlFlow, str::CharIndices};
 
 /// Parser结构体表示模板解析器的状态
 ///
@@ -23,84 +24,38 @@ use std::{cmp::Ordering, iter::Peekable, ops::ControlFlow, str::CharIndices};
 ///    使用peekable()包装使迭代器支持预览下一个字符而不消费它
 pub struct Parser<'s> {
   source: &'s str,
-  chars: Peekable<CharIndices<'s>>,
+  state: ParseState<'s>,
 }
 
 impl<'s> Parser<'s> {
   pub fn new(source: &'s str) -> Self {
     Self {
       source,
-      chars: source.char_indices().peekable(),
+      state: ParseState::new("", source),
     }
-  }
-
-  fn try_parse<F, R>(&mut self, f: F) -> PResult<R>
-  where
-    F: FnOnce(&mut Self) -> PResult<R>,
-  {
-    let chars = self.chars.clone();
-    let result = f(self);
-    if result.is_err() {
-      self.chars = chars;
-    }
-    result
   }
 
   fn emit_error(&mut self, kind: SyntaxErrorKind) -> SyntaxError {
-    let pos = self
-      .chars
-      .peek()
-      .map(|(pos, _)| *pos)
-      .unwrap_or(self.source.len());
-    self.emit_error_with_pos(kind, pos)
+    self.state.add_error(kind)
   }
 
-  fn emit_error_with_pos(&self, kind: SyntaxErrorKind, pos: usize) -> SyntaxError {
-    let search = memchr::memchr_iter(b'\n', self.source.as_bytes()).try_fold(
-      (1, 0),
-      |(line, prev_offset), offset| match pos.cmp(&offset) {
-        Ordering::Less => ControlFlow::Break((line, prev_offset)),
-        Ordering::Equal => ControlFlow::Break((line, prev_offset)),
-        Ordering::Greater => ControlFlow::Continue((line + 1, offset)),
-      },
-    );
-    let (line, column) = match search {
-      ControlFlow::Break((line, offset)) => (line, pos - offset + 1),
-      ControlFlow::Continue((line, _)) => (line, 0),
-    };
-    SyntaxError {
-      kind,
-      pos,
-      line,
-      column,
-    }
-  }
-
-  fn skip_ws(&mut self) {
-    while self
-      .chars
-      .next_if(|(_, c)| c.is_ascii_whitespace())
-      .is_some()
-    {}
-  }
-
-  fn with_taken<T, F>(&mut self, parser: F) -> PResult<(T, &'s str)>
-  where
-    F: FnOnce(&mut Self) -> PResult<T>,
-  {
-    let start = self
-      .chars
-      .peek()
-      .map(|(i, _)| *i)
-      .unwrap_or(self.source.len());
-    let parsed = parser(self)?;
-    let end = self
-      .chars
-      .peek()
-      .map(|(i, _)| *i)
-      .unwrap_or(self.source.len());
-    Ok((parsed, unsafe { self.source.get_unchecked(start..end) }))
-  }
+  // fn with_taken<T, F>(&mut self, parser: F) -> PResult<(T, &'s str)>
+  // where
+  //   F: FnOnce(&mut Self) -> PResult<T>,
+  // {
+  //   let start = self
+  //     .chars
+  //     .peek()
+  //     .map(|(i, _)| *i)
+  //     .unwrap_or(self.source.len());
+  //   let parsed = parser(self)?;
+  //   let end = self
+  //     .chars
+  //     .peek()
+  //     .map(|(i, _)| *i)
+  //     .unwrap_or(self.source.len());
+  //   Ok((parsed, unsafe { self.source.get_unchecked(start..end) }))
+  // }
 
   fn parse_attr(&mut self) -> PResult<Attribute> {
     let name = self.parse_attr_name()?;
@@ -119,12 +74,12 @@ impl<'s> Parser<'s> {
         None => None,
       },
       loc: Range {
-        start: Location {
+        start: Position {
           offset: 0,
           line: 0,
           column: 0,
         },
-        end: Location {
+        end: Position {
           offset: 0,
           line: 0,
           column: 0,
@@ -231,12 +186,12 @@ impl<'s> Parser<'s> {
     Ok(Comment {
       raw: unsafe { self.source.get_unchecked(start..end) }.to_string(),
       loc: Range {
-        start: Location {
+        start: Position {
           offset: start as u32,
           line: 0,
           column: 0,
         },
-        end: Location {
+        end: Position {
           offset: end as u32,
           line: 0,
           column: 0,
@@ -247,25 +202,21 @@ impl<'s> Parser<'s> {
   }
 
   fn parse_element(&mut self) -> PResult<Element> {
-    let Some(..) = self.chars.next_if(|(_, c)| *c == '<') else {
+    let Some(..) = self.state.peek() else {
       return Err(self.emit_error(SyntaxErrorKind::ExpectElement));
     };
-    let start = self
-      .chars
-      .peek()
-      .map(|(i, _)| *i)
-      .unwrap_or(self.source.len());
+    let start = self.state.position();
 
     let tag_name = self.parse_tag_name()?;
 
     let mut attrs = vec![];
     let mut first_attr_same_line = true;
     loop {
-      match self.chars.peek() {
+      match self.state.peek() {
         // 自闭和合标签
-        Some((_, '/')) => {
-          self.chars.next();
-          if self.chars.next_if(|(_, c)| *c == '>').is_some() {
+        Some('/') => {
+          self.state.next();
+          if self.state.next_if(|(_, c)| *c == '>').is_some() {
             return Ok(Element {
               name: tag_name.to_string(),
               attrs,
@@ -273,12 +224,12 @@ impl<'s> Parser<'s> {
               children: vec![],
               self_closing: true,
               loc: Range {
-                start: Location {
+                start: Position {
                   offset: start as u32,
                   line: 0,
                   column: 0,
                 },
-                end: Location {
+                end: Position {
                   offset: 0,
                   line: 0,
                   column: 0,
@@ -289,18 +240,18 @@ impl<'s> Parser<'s> {
           }
           return Err(self.emit_error(SyntaxErrorKind::ExpectSelfCloseTag));
         }
-        Some((_, '>')) => {
-          self.chars.next();
+        Some('>') => {
+          self.state.next();
           break;
         }
-        Some((_, '\n')) => {
+        Some('\n') => {
           if attrs.is_empty() {
             first_attr_same_line = false;
           }
-          self.chars.next();
+          self.state.next();
         }
-        Some((_, c)) if c.is_ascii_whitespace() => {
-          self.chars.next();
+        Some(c) if c.is_ascii_whitespace() => {
+          self.state.next();
         }
         _ => {
           attrs.push(self.parse_attr()?);
@@ -316,12 +267,12 @@ impl<'s> Parser<'s> {
         children.push(Node::Text(Text {
           raw,
           loc: Range {
-            start: Location {
+            start: Position {
               offset: 0,
               line: 0,
               column: 0,
             },
-            end: Location {
+            end: Position {
               offset: 0,
               line: 0,
               column: 0,
@@ -373,12 +324,12 @@ impl<'s> Parser<'s> {
       children,
       self_closing: false,
       loc: Range {
-        start: Location {
+        start: Position {
           offset: start as u32,
           line: 0,
           column: 0,
         },
-        end: Location {
+        end: Position {
           offset: 0,
           line: 0,
           column: 0,
@@ -458,40 +409,25 @@ impl<'s> Parser<'s> {
   // }
 
   fn parse_node(&mut self) -> PResult<Node> {
-    match self.chars.peek() {
-      Some((_, '<')) => {
-        let mut chars = self.chars.clone();
-        chars.next();
-        match chars.next() {
-          Some((_, c)) if is_tag_name_char(c) => self.parse_element().map(Node::Element),
-          Some((_, '!')) => self.parse_comment().map(Node::Comment),
-          _ => self.parse_text_node().map(Node::Text),
+    match self.state.peek_n() {
+      Some(['<', c]) => {
+        if is_tag_name_char(c) {
+          self.parse_element().map(Node::Element)
+        } else if c == '!' {
+          self.parse_comment().map(Node::Comment)
+        } else {
+          self.parse_text_node().map(Node::Text)
         }
       }
-      Some((_, '{')) => {
-        let mut chars = self.chars.clone();
-        chars.next();
-        match chars.next() {
-          Some((_, '{')) => self.parse_mustache_interpolation().map(|(expr, start)| {
-            Node::Expression(Expression {
-              raw: expr.to_string(),
-              loc: Range {
-                start: Location {
-                  offset: start as u32,
-                  line: 1,
-                  column: 1,
-                },
-                end: Location {
-                  offset: start as u32,
-                  line: 1,
-                  column: 1,
-                },
-                source: String::new(),
-              },
-            })
-          }),
-          Some(..) => self.parse_text_node().map(Node::Text),
-        }
+      Some(['{', '{']) => {
+        let start = self.state.position();
+        let (expr, _) = self.parse_mustache_interpolation()?;
+        let end = self.state.position();
+
+        Ok(Node::Expression(Expression {
+          raw: expr.to_string(),
+          loc: Range { start, end },
+        }))
       }
       Some(..) => self.parse_text_node().map(Node::Text),
       None => Err(self.emit_error(SyntaxErrorKind::ExpectElement)),
@@ -557,12 +493,12 @@ impl<'s> Parser<'s> {
     Ok(Text {
       raw: unsafe { self.source.get_unchecked(start..end) }.to_string(),
       loc: Range {
-        start: Location {
+        start: Position {
           offset: start as u32,
           line: 1,
           column: 1,
         },
-        end: Location {
+        end: Position {
           offset: end as u32,
           line: 1,
           column: 1,
@@ -574,49 +510,35 @@ impl<'s> Parser<'s> {
 
   pub fn parse_root(&mut self) -> PResult<Root> {
     let mut children = vec![];
-    while self.chars.peek().is_some() {
+    let start = self.state.position();
+    while self.state.peek().is_some() {
       children.push(self.parse_node()?);
     }
 
     Ok(Root {
       children,
       loc: Range {
-        start: Location {
-          offset: 0,
-          line: 1,
-          column: 1,
-        },
-        end: Location {
-          offset: self.source.len() as u32,
-          line: 1,
-          column: self.source.len() as u32,
-        },
-        source: self.source.to_string(),
+        start: start,
+        end: self.state.position(),
       },
     })
   }
 
-  fn parse_tag_name(&mut self) -> PResult<&'s str> {
-    let (start, mut end) = match self.chars.peek() {
-      Some((i, c)) if is_tag_name_char(*c) => {
-        let c = *c;
-        let start = *i;
-        self.chars.next();
-        (start, start + c.len_utf8())
-      }
-      _ => return Err(self.emit_error(SyntaxErrorKind::ExpectTagName)),
-    };
+  fn parse_tag_name(&mut self) -> PResult<String> {
+    let mut ret = vec![];
 
-    while let Some((i, c)) = self.chars.peek() {
-      if is_tag_name_char(*c) {
-        end = *i + c.len_utf8();
-        self.chars.next();
+    while let Some(c) = self.state.peek() {
+      if is_tag_name_char(c) {
+        ret.push(c);
+        self.state.next();
       } else {
         break;
       }
     }
-
-    unsafe { Ok(self.source.get_unchecked(start..end)) }
+    if ret.is_empty() {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectTagName));
+    }
+    Ok(ret.iter().collect())
   }
 
   fn parse_text_node(&mut self) -> PResult<Text> {
@@ -672,12 +594,12 @@ impl<'s> Parser<'s> {
     Ok(Text {
       raw: unsafe { self.source.get_unchecked(start..end) }.to_string(),
       loc: Range {
-        start: Location {
+        start: Position {
           offset: start as u32,
           line: 1,
           column: 1,
         },
-        end: Location {
+        end: Position {
           offset: end as u32,
           line: 1,
           column: 1,

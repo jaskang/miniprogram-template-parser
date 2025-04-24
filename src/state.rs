@@ -10,7 +10,7 @@ pub struct ParseState<'s> {
   offset: usize,
   line: usize,
   column: usize,
-  warnings: Vec<SyntaxError>,
+  errors: Vec<SyntaxError>,
 }
 
 impl<'s> ParseState<'s> {
@@ -31,34 +31,34 @@ impl<'s> ParseState<'s> {
       offset: 0,
       line: 0,
       column: 0,
-      warnings: vec![],
+      errors: vec![],
     }
   }
 
-  /// Add a new warning.
-  pub fn add_warning(&mut self, kind: SyntaxErrorKind, position: Position) {
-    self.warnings.push(SyntaxError {
+  fn add_error_with_position(&mut self, kind: SyntaxErrorKind, position: Position) -> SyntaxError {
+    let err = SyntaxError {
       kind,
       offset: position.offset,
       line: position.line,
       column: position.column,
-    })
+    };
+    self.errors.push(err);
+    err.clone()
   }
-
-  /// Add a new warning at the current position.
-  fn add_warning_at_current_position(&mut self, kind: SyntaxErrorKind) {
+  /// Add a new error at the current position.
+  pub fn add_error(&mut self, kind: SyntaxErrorKind) -> SyntaxError {
     let pos = self.position();
-    self.add_warning(kind, pos)
+    self.add_error_with_position(kind, pos)
   }
 
-  /// List warnings.
-  pub fn warnings(&self) -> impl Iterator<Item = &SyntaxError> {
-    self.warnings.iter()
+  /// List errors.
+  pub fn errors(&self) -> impl Iterator<Item = &SyntaxError> {
+    self.errors.iter()
   }
 
-  /// Extract and then clear all warnings.
-  pub fn take_warnings(&mut self) -> Vec<SyntaxError> {
-    std::mem::replace(&mut self.warnings, vec![])
+  /// Extract and then clear all errors.
+  pub fn take_errors(&mut self) -> Vec<SyntaxError> {
+    std::mem::replace(&mut self.errors, vec![])
   }
 
   fn cur_str(&self) -> &'s str {
@@ -134,11 +134,8 @@ impl<'s> ParseState<'s> {
     Some(ret)
   }
 
-  pub(crate) fn peek<const I: usize>(&mut self) -> Option<char> {
+  pub(crate) fn peek(&mut self) -> Option<char> {
     let mut iter = self.peek_chars();
-    for _ in 0..I {
-      iter.next()?;
-    }
     iter.next()
   }
 
