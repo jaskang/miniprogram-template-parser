@@ -40,6 +40,19 @@ mod tests {
     assert_eq!(ast.loc.end.offset, 11); // Assuming the length of "<div></div>" is 15
   }
   #[test]
+  fn attrs() {
+    let ast = parse("<view class=\"cls1\" bindtap=\"{{handleTap}}\"></view>".to_string()).unwrap();
+    if let Node::Element { attrs, .. } = &ast.children[0] {
+      assert_eq!(attrs.len(), 2);
+      let attr0 = attrs.get(0).unwrap();
+      let attr1 = attrs.get(1).unwrap();
+      assert_eq!(attr0.name, "class");
+      assert_eq!(attr1.name, "bindtap");
+    } else {
+      panic!("Expected an attrs node");
+    }
+  }
+  #[test]
   fn expressions() {
     let ast = parse("<text>Hello {{ world }}</text>".to_string()).unwrap();
     if let Node::Element { children, .. } = &ast.children[0] {

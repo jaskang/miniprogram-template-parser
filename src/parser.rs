@@ -49,7 +49,7 @@ impl<'s> Parser<'s> {
     };
     let end = self.state.position();
     // TODO: add support for dynamic attributes
-    Ok(Attribute::Static {
+    Ok(Attribute {
       name: name.to_string(),
       value: match value {
         Some((s, range)) => Some(vec![AttributeValue::Text {
@@ -90,6 +90,7 @@ impl<'s> Parser<'s> {
         let start = self.state.position();
         let value = self.state.skip_until_before(&quote).unwrap_or("");
         let end = self.state.position();
+        self.state.next();
         Ok((value, Range { start, end }))
       }
       _ => Err(self.emit_error(SyntaxErrorKind::ExpectAttrValue)),

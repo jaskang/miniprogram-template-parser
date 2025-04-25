@@ -48,18 +48,11 @@ pub struct Root {
 }
 
 #[derive(Debug, Clone)]
-#[napi]
-pub enum Attribute {
-  Static {
-    name: String,
-    value: Option<Vec<AttributeValue>>,
-    loc: Range,
-  },
-  Dynamic {
-    name: String,
-    value: Vec<AttributeValue>,
-    loc: Range,
-  },
+#[napi(object)]
+pub struct Attribute {
+  pub name: String,
+  pub value: Option<Vec<AttributeValue>>,
+  pub loc: Range,
 }
 
 #[derive(Debug, Clone)]
