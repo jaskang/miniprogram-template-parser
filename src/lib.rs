@@ -30,7 +30,7 @@ pub fn parse(input: String) -> napi::Result<Root> {
 
 #[cfg(test)]
 mod tests {
-  use crate::parse;
+  use crate::{ast::Node, parse};
 
   #[test]
   fn basic() {
@@ -38,5 +38,24 @@ mod tests {
     assert_eq!(ast.children.len(), 1);
     assert_eq!(ast.loc.start.offset, 0);
     assert_eq!(ast.loc.end.offset, 11); // Assuming the length of "<div></div>" is 15
+  }
+  #[test]
+  fn expressions() {
+    let ast = parse("<text>Hello {{ world }}</text>".to_string()).unwrap();
+    if let Node::Element { children, .. } = &ast.children[0] {
+      assert_eq!(children.len(), 2);
+      if let Node::Text { content, .. } = &children[0] {
+        assert_eq!(content, "Hello ");
+      } else {
+        panic!("Expected a text node");
+      }
+      if let Node::Expression { content, .. } = &children[1] {
+        assert_eq!(content, "{{ world }}");
+      } else {
+        panic!("Expected a expression node");
+      }
+    } else {
+      panic!("Expected an element node");
+    }
   }
 }

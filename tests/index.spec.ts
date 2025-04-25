@@ -4,9 +4,11 @@ import { Attribute, parse } from "../";
 describe("parse", () => {
   it("toBeDefined", () => {
     const result = parse(`<text>Hello {{name}}</text>`);
+    console.log("parse 2");
     // console.log(result);
     expect(result).toBeDefined();
   });
+  console.log("parse end s tart");
   // it("start tag", () => {
   //   const result = parse(`<text>Hello</text>`);
   //   // console.log(result);

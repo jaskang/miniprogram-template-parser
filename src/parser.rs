@@ -233,7 +233,7 @@ impl<'s> Parser<'s> {
     let end = self.state.position();
     match raw {
       Some(s) => Ok(Node::Expression {
-        content: s.to_string(),
+        content: format!("{}}}}}", s),
         loc: Range { start, end },
       }),
       None => Err(self.emit_error(SyntaxErrorKind::ExpectExpression)),
@@ -243,7 +243,7 @@ impl<'s> Parser<'s> {
   fn parse_node(&mut self) -> PResult<Vec<Node>> {
     let ret = &mut vec![];
     loop {
-      if self.state.ended() {
+      if self.state.ended() || self.state.peek_str("</") {
         // tag end, returns
         break;
       }
@@ -273,6 +273,7 @@ impl<'s> Parser<'s> {
             end: self.state.position(),
           },
         });
+        continue;
       }
     }
     Ok(ret.to_vec())
