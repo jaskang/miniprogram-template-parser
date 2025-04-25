@@ -311,7 +311,6 @@ impl<'s> Parser<'s> {
   }
 }
 
-/// Returns true if the provided character is a valid HTML tag name character.
 fn is_tag_name_char(c: char) -> bool {
   c.is_ascii_alphanumeric()
     || c == '-'

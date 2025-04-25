@@ -42,6 +42,7 @@ mod tests {
   #[test]
   fn attrs() {
     let ast = parse("<view class=\"cls1\" bindtap=\"{{handleTap}}\"></view>".to_string()).unwrap();
+    println!("{:?}", ast);
     if let Node::Element { attrs, .. } = &ast.children[0] {
       assert_eq!(attrs.len(), 2);
       let attr0 = attrs.get(0).unwrap();

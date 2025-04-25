@@ -27,8 +27,8 @@ impl<'s> ParseState<'s> {
     Self {
       source: s,
       offset: 0,
-      line: 0,
-      column: 0,
+      line: 1,
+      column: 1,
       errors: vec![],
     }
   }
@@ -88,7 +88,7 @@ impl<'s> ParseState<'s> {
     self.line += line_wrap_count;
     if line_wrap_count > 0 {
       let last_line_start = skipped.rfind('\n').unwrap() + 1;
-      self.column = skipped[last_line_start..].encode_utf16().count();
+      self.column = skipped[last_line_start..].encode_utf16().count() + 1;
     } else {
       self.column += skipped.encode_utf16().count();
     }
@@ -223,7 +223,7 @@ impl<'s> ParseState<'s> {
     };
     if ret == '\n' {
       self.line += 1;
-      self.column = 0;
+      self.column = 1;
     } else {
       self.column += ret.encode_utf16(&mut [0; 2]).len();
     }
@@ -246,7 +246,7 @@ impl<'s> ParseState<'s> {
       }
       if c == '\n' {
         self.line += 1;
-        self.column = 0;
+        self.column = 1;
       } else {
         self.column += c.encode_utf16(&mut [0; 2]).len();
       }
