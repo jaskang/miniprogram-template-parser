@@ -1,6 +1,8 @@
+use napi_derive::napi;
 use std::{borrow::Cow, error::Error, fmt};
 
 #[derive(Debug, Clone, Copy)]
+#[napi(object)]
 /// Syntax error when parsing tags, not `<script>` or `<style>` tag.
 pub struct SyntaxError {
   pub kind: SyntaxErrorKind,
@@ -10,10 +12,10 @@ pub struct SyntaxError {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[napi]
 pub enum SyntaxErrorKind {
   ExpectAttrName,
   ExpectAttrValue,
-  ExpectChar(char),
   ExpectCloseTag,
   ExpectComment,
   ExpectDoctype,
@@ -32,7 +34,6 @@ impl fmt::Display for SyntaxErrorKind {
     let reason: Cow<_> = match self {
       SyntaxErrorKind::ExpectAttrName => "expected attribute name".into(),
       SyntaxErrorKind::ExpectAttrValue => "expected attribute value".into(),
-      SyntaxErrorKind::ExpectChar(c) => format!("expected char '{c}'").into(),
       SyntaxErrorKind::ExpectCloseTag => "expected close tag".into(),
       SyntaxErrorKind::ExpectComment => "expected comment".into(),
       SyntaxErrorKind::ExpectDoctype => "expected HTML doctype".into(),

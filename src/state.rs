@@ -5,8 +5,7 @@ use crate::{
 
 /// Some meta information of the parsing.
 pub struct ParseState<'s> {
-  path: String,
-  whole_str: &'s str,
+  source: &'s str,
   offset: usize,
   line: usize,
   column: usize,
@@ -17,7 +16,7 @@ impl<'s> ParseState<'s> {
   /// Prepare a string for parsing.
   ///
   /// `path` and `position_offset` are used to adjust warning output.
-  pub fn new(path: &str, content: &'s str) -> Self {
+  pub fn new(content: &'s str) -> Self {
     let s = content;
     let s = if s.len() >= u32::MAX as usize {
       // log::error!("Source code too long. Truncated to `u32::MAX - 1` .");
@@ -26,8 +25,7 @@ impl<'s> ParseState<'s> {
       s
     };
     Self {
-      path: path.to_string(),
-      whole_str: s,
+      source: s,
       offset: 0,
       line: 0,
       column: 0,
@@ -56,13 +54,8 @@ impl<'s> ParseState<'s> {
     self.errors.iter()
   }
 
-  /// Extract and then clear all errors.
-  pub fn take_errors(&mut self) -> Vec<SyntaxError> {
-    std::mem::replace(&mut self.errors, vec![])
-  }
-
   fn cur_str(&self) -> &'s str {
-    &self.whole_str[self.offset..]
+    &self.source[self.offset..]
   }
 
   /// Whether the input is ended.
@@ -98,6 +91,18 @@ impl<'s> ParseState<'s> {
       self.column = skipped[last_line_start..].encode_utf16().count();
     } else {
       self.column += skipped.encode_utf16().count();
+    }
+  }
+
+  pub(crate) fn skip_until_with(&mut self, targets: Vec<&str>) -> Option<&'s str> {
+    let s = self.cur_str();
+    if let Some(index) = targets.iter().filter_map(|target| s.find(target)).min() {
+      let ret = &s[..index];
+      self.skip_bytes(index);
+      Some(ret)
+    } else {
+      self.skip_bytes(s.len());
+      None
     }
   }
 
@@ -282,7 +287,7 @@ impl<'s> ParseState<'s> {
   /// Panics if the start or the end is not at a character boundary.
   ///
   pub(crate) fn code_slice(&self, range: [usize; 2]) -> &'s str {
-    &self.whole_str[range[0]..range[1]]
+    &self.source[range[0]..range[1]]
   }
 
   /// Get the current UTF-8 byte index in the input.

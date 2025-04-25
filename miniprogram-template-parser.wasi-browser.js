@@ -54,3 +54,4 @@ const {
   },
 })
 export const parse = __napiModule.exports.parse
+export const SyntaxErrorKind = __napiModule.exports.SyntaxErrorKind

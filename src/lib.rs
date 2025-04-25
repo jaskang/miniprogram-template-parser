@@ -2,13 +2,14 @@
 
 mod ast;
 mod error;
-mod helpers;
 mod parser;
 mod state;
 
 use ast::{Node, Root};
+use error::SyntaxError;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use parser::Parser;
 
 /// 解析 WXML 字符串并返回 AST
 ///
@@ -18,6 +19,24 @@ use napi_derive::napi;
 /// 通过 toJson() 方法可以获取 JSON 格式的 AST
 #[napi]
 pub fn parse(input: String) -> napi::Result<Root> {
-  let result = parser::parse(&input);
-  Ok(result)
+  match Parser::new(input.as_str()).parse_root() {
+    Ok(ast) => Ok(ast),
+    Err(err) => Err(napi::Error::new(
+      napi::Status::GenericFailure,
+      format!("Parse error: {}", err),
+    )),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use crate::parse;
+
+  #[test]
+  fn basic() {
+    let ast = parse("<div></div>".to_string()).unwrap();
+    assert_eq!(ast.children.len(), 1);
+    assert_eq!(ast.loc.start.offset, 0);
+    assert_eq!(ast.loc.end.offset, 11); // Assuming the length of "<div></div>" is 15
+  }
 }

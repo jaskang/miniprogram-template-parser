@@ -86,3 +86,4 @@ const { instance: __napiInstance, module: __wasiModule, napiModule: __napiModule
 })
 
 module.exports.parse = __napiModule.exports.parse
+module.exports.SyntaxErrorKind = __napiModule.exports.SyntaxErrorKind
