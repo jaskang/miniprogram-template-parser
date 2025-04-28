@@ -78,23 +78,43 @@ impl<'s> Parser<'s> {
     }
     Ok(ret)
   }
-
-  fn parse_attr_value(&mut self) -> PResult<(&'s str, Range)> {
-    let quote = self.state.peek();
+  /// 解析属性值
+  /// 属性值可以是单引号或双引号包裹的字符串
+  /// 返回值是一个 AttributeValue 的 Vec
+  /// AttributeValue 是一个枚举类型，表示属性值的类型，有 Text 和 Expression
+  /// 例如：`<div id="myId {{ clx }}">` 中的 "myId {{ clx }}" 会被解析为两个 AttributeValue
+  /// 分别是 Text 和 Expression
+  /// 其中 "myId" 是 Text 类型，"{{ clx }}" 是 Expression 类型
+  fn parse_attr_value(&mut self) -> PResult<Vec<AttributeValue>> {
     // 如果 quote 是单引号或双引号，则开始解析
-    // 否则报错
-    match quote {
-      Some('\"') | Some('\'') => {
-        self.state.next();
-        let quote = quote.unwrap().to_string();
-        let start = self.state.position();
-        let value = self.state.skip_until_before(&quote).unwrap_or("");
-        let end = self.state.position();
-        self.state.next();
-        Ok((value, Range { start, end }))
-      }
-      _ => Err(self.emit_error(SyntaxErrorKind::ExpectAttrValue)),
+    let ret = &mut vec![];
+    let quote = self.state.peek();
+    if quote != Some('"') && quote != Some('\'') {
+      return Err(self.emit_error(SyntaxErrorKind::ExpectAttrValue));
     }
+    self.state.next();
+    let start = self.state.position();
+    let mut start_index = start.offset;
+    let cur_index = 0;
+    loop {
+      if self.state.peek() == Some(quote.unwrap()) {
+        break;
+      }
+      if let Some(raw) = self.state.skip_until_with(vec!["<", "{{"]) {
+        ret.push(AttributeValue::Text {
+          content: raw.to_string(),
+          loc: Range {
+            start,
+            end: self.state.position(),
+          },
+        });
+      } else if self.state.peek_str("{{") {
+        let expr = self.state.skip_until_after("}}");
+        start_index = self.state.position().offset;
+      } else {
+      }
+    }
+    ret
   }
 
   fn parse_comment(&mut self) -> PResult<Node> {
