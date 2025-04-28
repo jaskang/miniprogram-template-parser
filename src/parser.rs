@@ -7,6 +7,8 @@
 //! So, if you're learning or looking for a parser,
 //! this is not a good example and you should look for other projects.
 
+use std::vec;
+
 use crate::{
   ast::*,
   error::{SyntaxError, SyntaxErrorKind},
@@ -42,7 +44,7 @@ impl<'s> Parser<'s> {
   fn parse_attr(&mut self) -> PResult<Attribute> {
     let start = self.state.position();
     let name = self.parse_attr_name()?;
-    let value = if self.state.consume_str("=").is_some() {
+    let values = if self.state.consume_str("=").is_some() {
       Some(self.parse_attr_value()?)
     } else {
       None
@@ -51,11 +53,8 @@ impl<'s> Parser<'s> {
     // TODO: add support for dynamic attributes
     Ok(Attribute {
       name: name.to_string(),
-      value: match value {
-        Some((s, range)) => Some(vec![AttributeValue::Text {
-          content: s.to_string(),
-          loc: range,
-        }]),
+      value: match values {
+        Some(attr_values) => Some(attr_values),
         None => None,
       },
       loc: Range { start, end },
@@ -93,28 +92,25 @@ impl<'s> Parser<'s> {
       return Err(self.emit_error(SyntaxErrorKind::ExpectAttrValue));
     }
     self.state.next();
-    let start = self.state.position();
-    let mut start_index = start.offset;
-    let cur_index = 0;
     loop {
       if self.state.peek() == Some(quote.unwrap()) {
+        self.state.next();
         break;
       }
-      if let Some(raw) = self.state.skip_until_with(vec!["<", "{{"]) {
-        ret.push(AttributeValue::Text {
-          content: raw.to_string(),
-          loc: Range {
-            start,
-            end: self.state.position(),
-          },
-        });
-      } else if self.state.peek_str("{{") {
-        let expr = self.state.skip_until_after("}}");
-        start_index = self.state.position().offset;
+      if self.state.peek_str("{{") {
+        if let Node::Expression { content, loc } = self.parse_expression()? {
+          ret.push(AttributeValue::Expression { content, loc });
+        }
       } else {
+        let quote_str = quote.unwrap().to_string();
+        if let Node::Text { content, loc } = self.parse_text(vec!["{{", &quote_str])? {
+          ret.push(AttributeValue::Text { content, loc });
+        } else {
+          return Err(self.emit_error(SyntaxErrorKind::ExpectAttrValue));
+        }
       }
     }
-    ret
+    Ok(ret.to_vec())
   }
 
   fn parse_comment(&mut self) -> PResult<Node> {
@@ -122,7 +118,7 @@ impl<'s> Parser<'s> {
     self.state.consume_str("<!--");
     self.state.skip_whitespace();
 
-    match self.state.skip_until_after("-->") {
+    match self.state.skip_until_after(vec!["-->"]) {
       Some(s) => Ok(Node::Comment {
         content: s.to_string(),
         loc: Range {
@@ -185,7 +181,7 @@ impl<'s> Parser<'s> {
     let tag_end = format!("</{}>", tag_name);
     if tag_name.eq_ignore_ascii_case("script") || tag_name.eq_ignore_ascii_case("wxs") {
       let script_start = self.state.position();
-      if let Some(raw) = self.state.skip_until_before(tag_end.as_str()) {
+      if let Some(raw) = self.state.skip_until_before(vec![tag_end.as_str()]) {
         let script_end = self.state.position();
         self.state.consume_str(tag_end.as_str());
         return Ok(Node::Element {
@@ -247,10 +243,21 @@ impl<'s> Parser<'s> {
       },
     })
   }
-
+  fn parse_text(&mut self, end: Vec<&str>) -> PResult<Node> {
+    let start = self.state.position();
+    let raw = self.state.skip_until_before(end);
+    let end = self.state.position();
+    match raw {
+      Some(s) => Ok(Node::Text {
+        content: s.to_string(),
+        loc: Range { start, end },
+      }),
+      None => Err(self.emit_error(SyntaxErrorKind::ExpectTextNode)),
+    }
+  }
   fn parse_expression(&mut self) -> PResult<Node> {
     let start = self.state.position();
-    let raw = self.state.skip_until_after("}}");
+    let raw = self.state.skip_until_after(vec!["}}"]);
     let end = self.state.position();
     match raw {
       Some(s) => Ok(Node::Expression {
@@ -286,7 +293,7 @@ impl<'s> Parser<'s> {
         }
       }
       let text_start = self.state.position();
-      if let Some(raw) = self.state.skip_until_with(vec!["<", "{{"]) {
+      if let Some(raw) = self.state.skip_until_before(vec!["<", "{{"]) {
         ret.push(Node::Text {
           content: raw.to_string(),
           loc: Range {

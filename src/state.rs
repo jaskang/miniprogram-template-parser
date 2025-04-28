@@ -94,36 +94,57 @@ impl<'s> ParseState<'s> {
     }
   }
 
-  pub(crate) fn skip_until_with(&mut self, targets: Vec<&str>) -> Option<&'s str> {
+  // pub(crate) fn skip_until_with(&mut self, targets: Vec<&str>) -> Option<&'s str> {
+  //   let s = self.cur_str();
+  //   if let Some(index) = targets.iter().filter_map(|target| s.find(target)).min() {
+  //     let ret = &s[..index];
+  //     self.skip_bytes(index);
+  //     Some(ret)
+  //   } else {
+  //     self.skip_bytes(s.len());
+  //     None
+  //   }
+  // }
+
+  fn skip_until_with(&mut self, targets: Vec<&str>) -> Option<(&'s str, &'s str)> {
     let s = self.cur_str();
-    if let Some(index) = targets.iter().filter_map(|target| s.find(target)).min() {
+    if let Some((target, index)) = targets
+      .iter()
+      .filter_map(|target| {
+        let i = s.find(target);
+        match i {
+          Some(i) => Some((&s[i..i + target.len()], i)),
+          None => None,
+        }
+      })
+      .min_by_key(|(_, i)| *i)
+    {
       let ret = &s[..index];
       self.skip_bytes(index);
-      Some(ret)
+      Some((ret, target.clone()))
     } else {
-      self.skip_bytes(s.len());
       None
     }
   }
 
-  pub(crate) fn skip_until_before(&mut self, until: &str) -> Option<&'s str> {
-    let s = self.cur_str();
-    if let Some(index) = s.find(until) {
-      let ret = &s[..index];
-      self.skip_bytes(index);
-      Some(ret)
-    } else {
-      self.skip_bytes(s.len());
-      None
+  pub(crate) fn skip_until_before(&mut self, targets: Vec<&str>) -> Option<&'s str> {
+    let ret = self.skip_until_with(targets);
+    match ret {
+      Some((ret, _)) => Some(ret),
+      None => None,
     }
   }
 
-  pub(crate) fn skip_until_after(&mut self, until: &str) -> Option<&'s str> {
-    let ret = self.skip_until_before(until);
-    if ret.is_some() {
-      self.skip_bytes(until.len());
+  pub(crate) fn skip_until_after(&mut self, targets: Vec<&str>) -> Option<&'s str> {
+    let ret = self.skip_until_with(targets);
+    match ret {
+      Some((ret, target)) => {
+        let len = target.len();
+        self.skip_bytes(len);
+        Some(ret)
+      }
+      None => None,
     }
-    ret
   }
 
   pub(crate) fn peek_chars(&mut self) -> impl 's + Iterator<Item = char> {
@@ -271,7 +292,7 @@ impl<'s> ParseState<'s> {
           start_pos = Some(self.position());
         }
         self.skip_bytes(2);
-        self.skip_until_after("*/");
+        self.skip_until_after(vec!["*/"]);
         continue;
       }
       break;
