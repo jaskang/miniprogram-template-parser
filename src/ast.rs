@@ -7,7 +7,7 @@ use crate::error::SyntaxError;
 
 /// 定义位置信息，用于标记AST节点在源码中的位置
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[napi(object)]
 pub struct Position {
   /// chars 索引, 从 0 开始
