@@ -83,3 +83,75 @@ git push
 ```
 
 GitHub actions will do the rest job for you.
+
+# 微信小程序模板解析器
+
+这是一个用 Rust 实现的微信小程序 WXML 模板解析器，可以将 WXML 模板解析为抽象语法树 (AST)。
+
+## 功能特点
+
+- 支持解析标准 WXML 元素、属性和结构
+- 支持微信小程序特有的 `{{ }}` 表达式语法
+- 支持表达式在属性值中的混合使用
+- 提供详细的位置信息，便于错误提示和代码高亮
+- 灵活的错误处理机制
+- 高效的字符流处理
+- 全中文注释，便于理解和学习
+
+## 用法示例
+
+```rust
+use miniprogram_template_parser::{parse, Node, AttributeValue};
+
+fn main() {
+    // WXML 模板代码
+    let wxml_content = r#"
+    <view class="container">
+      <text>Hello, {{name}}!</text>
+      <button bindtap="{{onClick}}">点击我</button>
+    </view>
+    "#;
+
+    // 解析 WXML
+    let ast = parse(wxml_content);
+
+    // 现在你可以遍历 AST，进行进一步处理
+    println!("AST 节点数量: {}", ast.children.len());
+}
+```
+
+## 支持的节点类型
+
+- 元素节点 (`Node::Element`)：表示 WXML 中的各种标签
+- 文本节点 (`Node::Text`)：表示标签之间的纯文本内容
+- 表达式节点 (`Node::Expression`)：表示 `{{ }}` 形式的表达式
+- 注释节点 (`Node::Comment`)：表示 HTML 注释
+
+## 主要类型说明
+
+- `Root`: AST 的根节点，包含所有顶层节点
+- `Node`: 表示 AST 中的节点，可以是元素、文本、表达式或注释
+- `Attribute`: 表示元素的属性
+- `AttributeValue`: 表示属性的值，可以是文本或表达式
+- `Position`: 表示节点在源代码中的位置信息
+
+## 项目结构
+
+- `src/ast.rs`: 定义 AST 的数据结构
+- `src/parser.rs`: 实现核心解析逻辑
+- `src/state.rs`: 实现解析状态和字符流处理
+- `src/error.rs`: 定义错误类型和处理机制
+- `src/helpers.rs`: 提供辅助函数
+
+## 限制说明
+
+- 目前不支持解析微信小程序的特定指令（如 `wx:for`）的语义，仅作为普通属性处理
+- 不带引号的属性值中如果包含表达式，可能无法正确解析
+
+## 如何贡献
+
+欢迎提交 Pull Request 或 Issue 来改进这个项目。
+
+## 许可证
+
+[MIT 许可证](LICENSE)

@@ -1,33 +1,27 @@
-#![deny(clippy::all)]
+//! WXML 模板解析库
+//!
+//! 此库实现了微信小程序 WXML 模板语法的解析器，可以将 WXML 模板转换为抽象语法树
+//! 支持标准 WXML 的常见功能和 {{ }} 表达式语法
 
-mod ast;
-mod error;
-mod helpers;
-mod parser;
-mod state;
+pub mod ast;
+pub mod error;
+pub mod helpers;
+pub mod parser;
+pub mod state;
 
-use ast::{Node, Root};
-use error::SyntaxError;
-use napi::bindgen_prelude::*;
-use napi_derive::napi;
 use parser::Parser;
 
-/// 解析 WXML 字符串并返回 AST
-///
-/// 返回 AST 对象
-///
-/// 由于 napi-rs 3.0.0-alpha 版本的限制，我们返回一个包装对象
-/// 通过 toJson() 方法可以获取 JSON 格式的 AST
-#[napi]
-pub fn parse(input: String) -> napi::Result<Root> {
-  match Parser::new(input.as_str()).parse_root() {
-    Ok(ast) => Ok(ast),
-    Err(err) => Err(napi::Error::new(
-      napi::Status::GenericFailure,
-      format!("Parse error: {}", err),
-    )),
-  }
+/// 将 WXML 模板字符串解析为抽象语法树
+pub fn parse(source: &str) -> ast::Root {
+  let mut parser = Parser::new(source);
+  parser.parse()
 }
+
+/// 暴露 AST 类型以方便使用
+pub use ast::{Attribute, AttributeValue, Node, Position, Root, Value};
+
+/// 暴露错误类型以方便使用
+pub use error::{SyntaxError, SyntaxErrorKind};
 
 #[cfg(test)]
 mod tests {
@@ -35,58 +29,69 @@ mod tests {
 
   #[test]
   fn basic() {
-    let ast = parse("<div></div>".to_string()).unwrap();
+    let ast = parse("<div></div>");
     assert_eq!(ast.children.len(), 1);
-    assert_eq!(ast.loc.start.offset, 0);
-    assert_eq!(ast.loc.end.offset, 11); // Assuming the length of "<div></div>" is 15
+    assert_eq!(ast.start.offset, 0);
+    assert_eq!(ast.end.offset, 11);
   }
+
   #[test]
   fn attrs() {
-    let ast = parse("<view class=\"cls1\" bindtap=\"{{handleTap}}\"></view>".to_string()).unwrap();
+    let ast = parse("<view class=\"cls1\" bindtap=\"{{handleTap}}\"></view>");
     if let Node::Element { attrs, .. } = &ast.children[0] {
       assert_eq!(attrs.len(), 2);
-      let attr0 = attrs.get(0).unwrap();
-      let attr1 = attrs.get(1).unwrap();
+      let attr0 = &attrs[0];
+      let attr1 = &attrs[1];
       assert_eq!(attr0.name, "class");
       assert_eq!(attr1.name, "bindtap");
     } else {
-      panic!("Expected an attrs node");
+      panic!("Expected an Element node");
     }
   }
+
   #[test]
-  fn miuattrs() {
-    let ast = parse(
-      "<view class=\"cls1 {{tst}} cls2\" bindtap=\"tap1 tap2 {{handleTap}}\"></view>".to_string(),
-    )
-    .unwrap();
-    println!("{:?}", ast);
+  fn mixedattrs() {
+    let ast =
+      parse("<view class=\"cls1 {{tst}} cls2\" bindtap=\"tap1 tap2 {{handleTap}}\"></view>");
+
     if let Node::Element { attrs, .. } = &ast.children[0] {
       assert_eq!(attrs.len(), 2);
-      let attr0 = attrs.get(0).unwrap();
-      let attr1 = attrs.get(1).unwrap();
-      assert_eq!(attr0.value.as_ref().unwrap().iter().len(), 3);
-      assert_eq!(attr1.value.as_ref().unwrap().iter().len(), 2);
+      let attr0 = &attrs[0];
+      let attr1 = &attrs[1];
+
+      if let Some(values) = &attr0.value {
+        assert_eq!(values.len(), 3);
+      } else {
+        panic!("Expected attribute value");
+      }
+
+      if let Some(values) = &attr1.value {
+        assert_eq!(values.len(), 3);
+      } else {
+        panic!("Expected attribute value");
+      }
     } else {
-      panic!("Expected an attrs node");
+      panic!("Expected an Element node");
     }
   }
+
   #[test]
   fn expressions() {
-    let ast = parse("<text>Hello {{ world }}</text>".to_string()).unwrap();
+    let ast = parse("<text>Hello {{ world }}</text>");
     if let Node::Element { children, .. } = &ast.children[0] {
       assert_eq!(children.len(), 2);
       if let Node::Text { content, .. } = &children[0] {
         assert_eq!(content, "Hello ");
       } else {
-        panic!("Expected a text node");
+        panic!("Expected a Text node");
       }
       if let Node::Expression { content, .. } = &children[1] {
-        assert_eq!(content, "{{ world }}");
+        assert_eq!(content, "world");
       } else {
-        panic!("Expected a expression node");
+        panic!("Expected an Expression node");
       }
     } else {
-      panic!("Expected an element node");
+      panic!("Expected an Element node");
     }
   }
 }
