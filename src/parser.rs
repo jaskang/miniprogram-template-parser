@@ -18,3 +18,4 @@ pub struct Parser<'s> {
   state: ParseState<'s>,
 }
 
+impl<'s> Parser<'s> {}

@@ -18,13 +18,6 @@ pub struct Position {
   pub column: u32,
 }
 
-#[derive(Debug, Clone)]
-#[napi(object)]
-pub struct Range {
-  pub start: Position,
-  pub end: Position,
-}
-
 impl fmt::Display for Position {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "{} {}:{}", self.offset, self.line, self.column)
@@ -35,16 +28,25 @@ impl fmt::Display for Position {
 #[napi]
 pub enum Value {
   /// 静态值
-  Text { content: String, position: Position },
+  Text {
+    content: String,
+    start: Position,
+    end: Position,
+  },
   /// 动态值
-  Expression { content: String, position: Position },
+  Expression {
+    content: String,
+    start: Position,
+    end: Position,
+  },
 }
 
 #[derive(Debug, Clone)]
 #[napi(object)]
 pub struct Root {
   pub children: Vec<Node>,
-  pub loc: Range,
+  pub start: Position,
+  pub end: Position,
 }
 
 #[derive(Debug, Clone)]
@@ -52,14 +54,23 @@ pub struct Root {
 pub struct Attribute {
   pub name: String,
   pub value: Option<Vec<AttributeValue>>,
-  pub loc: Range,
+  pub start: Position,
+  pub end: Position,
 }
 
 #[derive(Debug, Clone)]
 #[napi]
 pub enum AttributeValue {
-  Text { content: String, loc: Range },
-  Expression { content: String, loc: Range },
+  Text {
+    content: String,
+    start: Position,
+    end: Position,
+  },
+  Expression {
+    content: String,
+    start: Position,
+    end: Position,
+  },
 }
 
 /// AST节点类型，代表WXML文档中的各种元素
@@ -73,18 +84,22 @@ pub enum Node {
     children: Vec<Node>,
     self_closing: bool,
     first_attr_same_line: bool,
-    loc: Range,
+    start: Position,
+    end: Position,
   },
   Text {
     content: String,
-    loc: Range,
+    start: Position,
+    end: Position,
   },
   Comment {
     content: String,
-    loc: Range,
+    start: Position,
+    end: Position,
   },
   Expression {
     content: String,
-    loc: Range,
+    start: Position,
+    end: Position,
   },
 }
