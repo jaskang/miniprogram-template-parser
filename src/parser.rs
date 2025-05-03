@@ -31,13 +31,13 @@ impl<'s> Parser<'s> {
   /// 解析WXML模板并生成抽象语法树
   pub fn parse(&mut self) -> Root {
     // 记录开始位置
-    let start = self.state.current_position();
+    let start = self.state.position();
 
     // 解析所有子节点
     let children = self.parse_nodes();
 
     // 获取结束位置
-    let end = self.state.current_position();
+    let end = self.state.position();
 
     // 生成根节点
     Root {
@@ -52,9 +52,34 @@ impl<'s> Parser<'s> {
     let mut nodes = Vec::new();
 
     while !self.state.is_eof() {
+      match self.state.peek_n() {
+        Some(['<', '/']) => {
+          if self.is_closing_tag() {
+            break;
+          }
+        }
+        Some(['<', '!']) => {
+          if self.is_comment() {
+            break;
+          }
+        }
+        Some(['<', _]) => {
+          if self.parse_node() {
+            break;
+          }
+        }
+        Some(['{', '{']) => {
+          if self.is_expression() {
+            break;
+          }
+        }
+        _ => {
+
+        }
+      }
       // 检查是否遇到结束标签
-      if let Some((_, '<')) = self.state.peek() {
-        let offset = self.state.current_position().offset;
+      if let Some([_, '<']) = self.state.peek_n() {
+        let offset = self.state.position().offset;
 
         if self.is_closing_tag() {
           break;
@@ -105,13 +130,13 @@ impl<'s> Parser<'s> {
 
     // 根据下一个字符决定如何解析
     match self.state.peek() {
-      Some((_, '<')) => {
+      Some('<') => {
         // 可能是标签开始或注释
         let next_state = self.state.clone();
         self.state.next(); // 消费 '<'
 
         match self.state.peek() {
-          Some((_, '!')) => {
+          Some('!') => {
             // 可能是注释 <!-- -->
             self.state.next(); // 消费 '!'
             if self.state.eat_string("--") {
@@ -122,7 +147,7 @@ impl<'s> Parser<'s> {
               return self.parse_text();
             }
           }
-          Some((_, '/')) => {
+          Some('/') => {
             // 结束标签，不应该在这里处理
             self.state = next_state;
             return self.parse_text();
@@ -139,7 +164,7 @@ impl<'s> Parser<'s> {
           }
         }
       }
-      Some((_, '{')) => {
+      Some('{') => {
         // 可能是表达式 {{ ... }}
         let next_char = {
           let mut state_clone = self.state.clone();
