@@ -129,54 +129,33 @@ impl<'s> Parser<'s> {
     self.state.skip_whitespace();
 
     // 根据下一个字符决定如何解析
-    match self.state.peek() {
-      Some('<') => {
-        // 可能是标签开始或注释
-        let next_state = self.state.clone();
-        self.state.next(); // 消费 '<'
-
-        match self.state.peek() {
-          Some('!') => {
-            // 可能是注释 <!-- -->
-            self.state.next(); // 消费 '!'
-            if self.state.eat_string("--") {
+    match self.state.peek_n() {
+      Some(['<', ch]) => {
+        match ch {
+          '!' => {
+            if let Some(['<','!','-', '-']) = self.state.peek_n() {
               return self.parse_comment();
             } else {
-              // 不是有效的注释，回退并尝试作为文本解析
-              self.state = next_state;
-              return self.parse_text();
+              return Err(self.state.add_error(SyntaxErrorKind::ExpectComment));
             }
           }
-          Some('/') => {
+          '/' => {
             // 结束标签，不应该在这里处理
-            self.state = next_state;
-            return self.parse_text();
+            return Err(self.state.add_error(SyntaxErrorKind::ExpectCloseTag));
           }
-          Some(_) => {
-            // 正常的开始标签
-            self.state = next_state;
-            return self.parse_element();
-          }
-          None => {
-            // 到达文件尾部
-            self.state = next_state;
-            return Err(self.state.record_error(SyntaxErrorKind::ExpectElement));
+          _ => {
+            if is_tag_name_char(ch) {
+              // 正常的开始标签
+              return self.parse_element();
+            } else {
+              return Err(self.state.add_error(SyntaxErrorKind::ExpectElement));
+            }
           }
         }
       }
-      Some('{') => {
+      Some(['{', '{']) => {
         // 可能是表达式 {{ ... }}
-        let next_char = {
-          let mut state_clone = self.state.clone();
-          state_clone.next(); // 消费第一个 '{'
-          state_clone.peek()
-        };
-
-        if let Some((_, '{')) = next_char {
-          return self.parse_expression();
-        } else {
-          return self.parse_text();
-        }
+        return self.parse_expression();
       }
       Some(_) => {
         // 普通文本节点
@@ -184,19 +163,17 @@ impl<'s> Parser<'s> {
       }
       None => {
         // 到达文件尾部
-        return Err(self.state.record_error(SyntaxErrorKind::ExpectTextNode));
+        return Err(self.state.add_error(SyntaxErrorKind::ExpectTextNode));
       }
     }
   }
 
   /// 解析元素节点
   fn parse_element(&mut self) -> PResult<Node> {
-    let start = self.state.current_position();
+    let start = self.state.position();
 
     // 消费开始标签 <
-    if !self.state.eat('<') {
-      return Err(self.state.record_error(SyntaxErrorKind::ExpectElement));
-    }
+    self.state.next();
 
     // 解析标签名
     let name = self.parse_tag_name()?;
@@ -237,11 +214,11 @@ impl<'s> Parser<'s> {
   }
 
   /// 解析标签名
-  fn parse_tag_name(&mut self) -> PResult<String> {
-    let name = self.state.consume_until(|c| !is_tag_name_char(c));
+  fn parse_tag_name(&mut self) -> PResult<&'s str> {
+    let name = self.state.consume_while(|c| is_tag_name_char(c));
 
     if name.is_empty() {
-      return Err(self.state.record_error(SyntaxErrorKind::ExpectTagName));
+      return Err(self.state.add_error(SyntaxErrorKind::ExpectTagName));
     }
 
     Ok(name)
@@ -250,7 +227,7 @@ impl<'s> Parser<'s> {
   /// 解析属性列表
   fn parse_attributes(&mut self) -> PResult<(Vec<Attribute>, bool)> {
     let mut attrs = Vec::new();
-    let start_line = self.state.current_position().line;
+    let start_line = self.state.position().line;
     let mut first_attr_same_line = false;
 
     // 跳过空格
@@ -268,7 +245,7 @@ impl<'s> Parser<'s> {
 
       // 检查是否到达标签结束
       match self.state.peek() {
-        Some((_, '>')) | Some((_, '/')) => break,
+        Some( '>') | Some('/') => break,
         None => break,
         _ => {
           // 尝试解析下一个属性
@@ -288,30 +265,29 @@ impl<'s> Parser<'s> {
 
   /// 解析单个属性
   fn parse_attribute(&mut self) -> PResult<Attribute> {
-    let start = self.state.current_position();
+    let start = self.state.position();
 
     // 解析属性名
-    let name = self.state.consume_until(|c| !is_attr_name_char(c));
+    let name = self.state.consume_while(|c| is_attr_name_char(c));
 
     if name.is_empty() {
-      return Err(self.state.record_error(SyntaxErrorKind::ExpectAttrName));
+      return Err(self.state.add_error(SyntaxErrorKind::ExpectAttrName));
     }
 
     // 跳过空格
     self.state.skip_whitespace();
 
     // 检查是否有属性值
-    let value = if self.state.eat('=') {
-      self.state.skip_whitespace();
+    let value = if self.state.next_if('=') {
       Some(self.parse_attribute_value()?)
     } else {
       None
     };
 
-    let end = self.state.current_position();
+    let end = self.state.position();
 
     Ok(Attribute {
-      name,
+      name: name.to_string(),
       value,
       start,
       end,
@@ -320,102 +296,29 @@ impl<'s> Parser<'s> {
 
   /// 解析属性值
   fn parse_attribute_value(&mut self) -> PResult<Vec<AttributeValue>> {
-    let mut values = Vec::new();
+    let start = self.state.position();
     let quote = match self.state.peek() {
-      Some((_, '"')) | Some((_, '\'')) => {
+      Some('"') | Some('\'') => {
         let (_, q) = self.state.next().unwrap();
         Some(q)
       }
       _ => None,
     };
-
+    let mut values = Vec::new();
     // 如果有引号，解析引号内的内容
-    if let Some(quote_char) = quote {
-      let mut text_start = self.state.current_position();
-      let mut current_text = String::new();
+    if let Some(quote) = quote {
+      let mut value_start = self.state.position();
+      self.state.next();
 
-      while let Some((_, c)) = self.state.peek() {
-        if c == quote_char {
-          // 引号结束
-          if !current_text.is_empty() {
-            let text_end = self.state.current_position();
-            values.push(AttributeValue::Text {
-              content: current_text,
-              start: text_start,
-              end: text_end,
-            });
-          }
-          self.state.next(); // 消费引号
+      while let Some(c) = self.state.peek() {
+        if c == quote {
+          self.state.next();
           break;
-        } else if c == '{' {
-          // 可能是表达式
-          let expr_start = {
-            let mut state_clone = self.state.clone();
-            state_clone.next(); // 消费第一个 '{'
-            if let Some((_, '{')) = state_clone.peek() {
-              // 确认是表达式
-              if !current_text.is_empty() {
-                // 先保存之前的文本
-                let text_end = self.state.current_position();
-                values.push(AttributeValue::Text {
-                  content: current_text,
-                  start: text_start,
-                  end: text_end,
-                });
-                current_text = String::new();
-              }
+        } else if self.state.peek_n() == Some(['{', '{']) {
+          self.state.consume_while(|c| c != '}');
+        } else{
 
-              // 消费 {{
-              self.state.next();
-              self.state.next();
-
-              let expr_start = self.state.current_position();
-
-              // 解析表达式内容
-              let content = self.state.consume_until(|c| c == '}');
-
-              // 消费 }}
-              if self.state.eat('}') && self.state.eat('}') {
-                let expr_end = self.state.current_position();
-                values.push(AttributeValue::Expression {
-                  content,
-                  start: expr_start,
-                  end: expr_end,
-                });
-
-                // 重置文本开始位置
-                text_start = self.state.current_position();
-                continue;
-              } else {
-                // 表达式没有正确结束，把内容当作普通文本
-                current_text.push_str("{{");
-                current_text.push_str(&content);
-              }
-            } else {
-              // 单个 { 符号，作为普通文本处理
-              self.state.next();
-              current_text.push('{');
-            }
-            continue;
-          };
         }
-
-        // 普通字符，添加到当前文本
-        if let Some((_, c)) = self.state.next() {
-          current_text.push(c);
-        } else {
-          break;
-        }
-      }
-
-      if !current_text.is_empty() {
-        // 处理剩余文本
-        let text_end = self.state.current_position();
-        values.push(AttributeValue::Text {
-          content: current_text,
-          start: text_start,
-          end: text_end,
-        });
       }
     } else {
       // 没有引号，解析到下一个空格或标签结束

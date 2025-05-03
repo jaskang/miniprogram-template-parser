@@ -12,6 +12,8 @@ pub struct ParseState<'s> {
   source: &'s str,
   /// 源码字符迭代器
   chars: Peekable<CharIndices<'s>>,
+  /// 当前 char 的索引
+  index: usize,
   /// 当前 chars 的偏移量
   offset: usize,
   /// 当前行号
@@ -28,6 +30,7 @@ impl<'s> ParseState<'s> {
     Self {
       source,
       chars: source.char_indices().peekable(),
+      index: 0,
       offset: 0,
       line: 1,
       column: 1,
@@ -88,6 +91,7 @@ impl<'s> ParseState<'s> {
     match self.chars.next() {
         Some((offset, ch)) => {
             self.offset = offset;
+            self.index += ch.len_utf8();
             if ch == '\n' {
                 self.line += 1;
                 self.column = 1;
@@ -114,15 +118,14 @@ impl<'s> ParseState<'s> {
 
 
   
-  /// 消费字符直到满足条件
-  pub fn consume_while<F>(&mut self, predicate: F) -> String
+  /// 消费字符直到不满足条件
+  pub fn consume_while<F>(&mut self, predicate: F) -> &'s str
   where
     F: Fn(char) -> bool, {
-    let mut chars = Vec::new();
+    let start = self.index;
     loop {
         if let Some(ch) = self.peek() {
             if predicate(ch) {
-              chars.push(ch);
               self.next();
             }else{
               break;
@@ -131,8 +134,17 @@ impl<'s> ParseState<'s> {
             break;
         }
     }
-    chars.into_iter().collect()
+    &self.source[start..self.index]
   }
+
+  pub fn consume_until(&mut self, target: &str) -> &'s str {
+    let start = self.index;
+    while !self.source[start..self.index].contains(target) {
+      self.next();
+    }
+    &self.source[start..self.index]
+  }
+  
 
   /// 跳过空白字符
   pub fn skip_whitespace(&mut self) {
@@ -143,6 +155,4 @@ impl<'s> ParseState<'s> {
       self.next();
     }
   }
-
-
 }
