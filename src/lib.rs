@@ -57,50 +57,51 @@ mod tests {
     }
   }
 
-  // #[test]
-  // fn mixedattrs() {
-  //   let ast = parse(
-  //     "<view class=\"cls1 {{tst}} cls2\" bindtap=\"tap1 tap2 {{handleTap}}\"></view>".to_string(),
-  //   );
+  #[test]
+  fn mixedattrs() {
+    let ast = parse(
+      "<view class=\"cls1 {{tst}} cls2\" bindtap=\"tap1 tap2 {{handleTap}}\"></view>".to_string(),
+    );
 
-  //   if let Node::Element { attrs, .. } = &ast.children[0] {
-  //     assert_eq!(attrs.len(), 2);
-  //     let attr0 = &attrs[0];
-  //     let attr1 = &attrs[1];
+    if let Node::Element { attrs, .. } = &ast.children[0] {
+      assert_eq!(attrs.len(), 2);
+      let attr0 = &attrs[0];
+      let attr1 = &attrs[1];
 
-  //     if let Some(values) = &attr0.value {
-  //       assert_eq!(values.len(), 3);
-  //     } else {
-  //       panic!("Expected attribute value");
-  //     }
+      if let Some(values) = &attr0.value {
+        assert_eq!(values.len(), 3);
+      } else {
+        panic!("Expected attribute value");
+      }
 
-  //     if let Some(values) = &attr1.value {
-  //       assert_eq!(values.len(), 3);
-  //     } else {
-  //       panic!("Expected attribute value");
-  //     }
-  //   } else {
-  //     panic!("Expected an Element node");
-  //   }
-  // }
+      if let Some(values) = &attr1.value {
+        assert_eq!(values.len(), 2);
+      } else {
+        panic!("Expected attribute value");
+      }
+    } else {
+      panic!("Expected an Element node");
+    }
+  }
 
-  // #[test]
-  // fn expressions() {
-  //   let ast = parse("<text>Hello {{ world }}</text>".to_string());
-  //   if let Node::Element { children, .. } = &ast.children[0] {
-  //     assert_eq!(children.len(), 2);
-  //     if let Node::Text { content, .. } = &children[0] {
-  //       assert_eq!(content, "Hello ");
-  //     } else {
-  //       panic!("Expected a Text node");
-  //     }
-  //     if let Node::Expression { content, .. } = &children[1] {
-  //       assert_eq!(content, "world");
-  //     } else {
-  //       panic!("Expected an Expression node");
-  //     }
-  //   } else {
-  //     panic!("Expected an Element node");
-  //   }
-  // }
+  #[test]
+  fn expressions() {
+    let ast = parse("<text>Hello {{ world }}</text>".to_string());
+    if let Node::Element { children, .. } = &ast.children[0] {
+      println!("children: {:?}", children);
+      assert_eq!(children.len(), 2);
+      if let Node::Text { content, .. } = &children[0] {
+        assert_eq!(content, "Hello ");
+      } else {
+        panic!("Expected a Text node");
+      }
+      if let Node::Expression { content, .. } = &children[1] {
+        assert_eq!(content, "world");
+      } else {
+        panic!("Expected an Expression node");
+      }
+    } else {
+      panic!("Expected an Element node");
+    }
+  }
 }

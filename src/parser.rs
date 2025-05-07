@@ -237,24 +237,24 @@ impl<'s> Parser<'s> {
         match self.state.peek_n() {
           Some(['{', '{']) => {
             let value_start = self.state.position();
+            self.state.next();
+            self.state.next();
             let expr = self.state.consume_until(vec!["}}"]);
             self.state.next();
             self.state.next();
             let value_end = self.state.position();
             values.push(AttributeValue::Expression {
-              content: expr.to_string(),
+              content: expr.trim().to_string(),
               start: value_start,
               end: value_end,
             });
           }
           _ => {
             let value_start = self.state.position();
-            println!("value_start: {}", self.state.current_str());
             let text = self
               .state
               .consume_until(vec!["{{", quote.to_string().as_str()]);
             let value_end = self.state.position();
-            println!("value_end: {}", self.state.current_str());
             values.push(AttributeValue::Text {
               content: text.to_string(),
               start: value_start,
@@ -364,11 +364,9 @@ impl<'s> Parser<'s> {
     // 跳过表达式开始处的空白
     self.state.skip_whitespace();
 
-    // 解析表达式内容
-    let mut content = String::new();
-    let expression_start = self.state.position();
-
     let str = self.state.consume_until(vec!["}}"]);
+    self.state.next();
+    self.state.next();
     let content = str.to_string();
     // 如果文本内容为空，返回错误
     if content.is_empty() {
