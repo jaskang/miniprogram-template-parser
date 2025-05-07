@@ -47,40 +47,32 @@ describe("parse", () => {
     const wxml = `<view class="cls1" bindtap="{{handleTap}}"></view>`;
     const result = parse(wxml);
     const attrs = result.children[0].attrs as Attribute[];
-    console.log("attributes", attrs);
     expect(attrs[0]).toEqual({
       name: "class",
       value: [
         {
           type: "Text",
           content: "cls1",
-          loc: {
-            start: { column: 14, line: 1, offset: 13 },
-            end: { column: 18, line: 1, offset: 17 },
-          },
+          start: { column: 14, line: 1, offset: 13 },
+          end: { column: 18, line: 1, offset: 17 },
         },
       ],
-      loc: {
-        start: { column: 7, line: 1, offset: 6 },
-        end: { column: 19, line: 1, offset: 18 },
-      },
+      start: { column: 7, line: 1, offset: 6 },
+      end: { column: 19, line: 1, offset: 18 },
     });
     expect(attrs[1]).toEqual({
       name: "bindtap",
       value: [
         {
           type: "Expression",
-          content: "{{handleTap}}",
-          loc: {
-            start: { column: 29, line: 1, offset: 28 },
-            end: { column: 42, line: 1, offset: 41 },
-          },
+          content: "handleTap",
+          start: { column: 29, line: 1, offset: 28 },
+          end: { column: 42, line: 1, offset: 41 },
         },
       ],
-      loc: {
-        start: { column: 20, line: 1, offset: 19 },
-        end: { column: 43, line: 1, offset: 42 },
-      },
+
+      start: { column: 20, line: 1, offset: 19 },
+      end: { column: 43, line: 1, offset: 42 },
     });
   });
   // <view class="cls1 {{test}} cls2"></view>
@@ -92,26 +84,22 @@ describe("parse", () => {
       {
         type: "Text",
         content: "cls1 ",
-        loc: {
-          start: { column: 14, line: 1, offset: 13 },
-          end: { column: 19, line: 1, offset: 18 },
-        },
+
+        start: { column: 14, line: 1, offset: 13 },
+        end: { column: 19, line: 1, offset: 18 },
       },
       {
         type: "Expression",
-        content: "{{test}}",
-        loc: {
-          start: { column: 19, line: 1, offset: 18 },
-          end: { column: 27, line: 1, offset: 26 },
-        },
+        content: "test",
+        start: { column: 19, line: 1, offset: 18 },
+        end: { column: 27, line: 1, offset: 26 },
       },
       {
         type: "Text",
         content: " cls2",
-        loc: {
-          start: { column: 27, line: 1, offset: 26 },
-          end: { column: 32, line: 1, offset: 31 },
-        },
+
+        start: { column: 27, line: 1, offset: 26 },
+        end: { column: 32, line: 1, offset: 31 },
       },
     ]);
   });

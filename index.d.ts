@@ -3,29 +3,23 @@
 export interface Attribute {
   name: string
   value?: Array<AttributeValue>
-  loc: Range
+  start: Position
+  end: Position
 }
 
 export type AttributeValue =
-  | { type: 'Text', content: string, loc: Range }
-  | { type: 'Expression', content: string, loc: Range }
+  | { type: 'Text', content: string, start: Position, end: Position }
+  | { type: 'Expression', content: string, start: Position, end: Position }
 
 /** AST节点类型，代表WXML文档中的各种元素 */
 export type Node =
-  | { type: 'Element', name: string, attrs: Array<Attribute>, children: Array<Node>, selfClosing: boolean, firstAttrSameLine: boolean, loc: Range }
-  | { type: 'Text', content: string, loc: Range }
-  | { type: 'Comment', content: string, loc: Range }
-  | { type: 'Expression', content: string, loc: Range }
+  | { type: 'Element', name: string, attrs: Array<Attribute>, children: Array<Node>, selfClosing: boolean, firstAttrSameLine: boolean, start: Position, end: Position }
+  | { type: 'Text', content: string, start: Position, end: Position }
+  | { type: 'Comment', content: string, start: Position, end: Position }
+  | { type: 'Expression', content: string, start: Position, end: Position }
 
-/**
- * 解析 WXML 字符串并返回 AST
- *
- * 返回 AST 对象
- *
- * 由于 napi-rs 3.0.0-alpha 版本的限制，我们返回一个包装对象
- * 通过 toJson() 方法可以获取 JSON 格式的 AST
- */
-export declare function parse(input: string): Root
+/** 将 WXML 模板字符串解析为抽象语法树 */
+export declare function parse(source: string): Root
 
 /** 定义位置信息，用于标记AST节点在源码中的位置 */
 export interface Position {
@@ -37,14 +31,10 @@ export interface Position {
   column: number
 }
 
-export interface Range {
-  start: Position
-  end: Position
-}
-
 export interface Root {
   children: Array<Node>
-  loc: Range
+  start: Position
+  end: Position
 }
 
 /** Syntax error when parsing tags, not `<script>` or `<style>` tag. */
@@ -72,5 +62,5 @@ export declare const enum SyntaxErrorKind {
 }
 
 export type Value =
-  | { type: 'Text', content: string, position: Position }
-  | { type: 'Expression', content: string, position: Position }
+  | { type: 'Text', content: string, start: Position, end: Position }
+  | { type: 'Expression', content: string, start: Position, end: Position }
