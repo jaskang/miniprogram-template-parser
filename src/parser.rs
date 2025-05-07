@@ -237,11 +237,9 @@ impl<'s> Parser<'s> {
         match self.state.peek_n() {
           Some(['{', '{']) => {
             let value_start = self.state.position();
-            self.state.next();
-            self.state.next();
+            self.state.next_n(2);
             let expr = self.state.consume_until(vec!["}}"]);
-            self.state.next();
-            self.state.next();
+            self.state.next_n(2);
             let value_end = self.state.position();
             values.push(AttributeValue::Expression {
               content: expr.trim().to_string(),
@@ -365,17 +363,9 @@ impl<'s> Parser<'s> {
     self.state.skip_whitespace();
 
     let str = self.state.consume_until(vec!["}}"]);
-    self.state.next();
-    self.state.next();
-    let content = str.to_string();
-    // 如果文本内容为空，返回错误
-    if content.is_empty() {
-      return Err(self.state.add_error(SyntaxErrorKind::ExpectExpression));
-    }
+    let content = str.trim().to_string();
 
-    // 去除表达式结尾处的空白
-    let content = content.trim().to_string();
-
+    self.state.next_n(2);
     let end = self.state.position();
 
     Ok(Node::Expression {

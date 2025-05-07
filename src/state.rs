@@ -120,6 +120,14 @@ impl<'s> ParseState<'s> {
     }
   }
 
+  pub fn next_n(&mut self, n: usize) -> &'s str {
+    let start = self.index;
+    for _ in 0..n {
+      self.next();
+    }
+    &self.source[start..self.index]
+  }
+
   /// 判断是否可以匹配指定的字符，如果能则消费它
   pub fn next_if(&mut self, c: char) -> bool {
     if let Some(ch) = self.peek() {
