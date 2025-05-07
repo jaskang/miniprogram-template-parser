@@ -28,28 +28,28 @@ impl<'s> Parser<'s> {
     }
   }
 
+  pub fn parse_root(&mut self) -> PResult<Root> {
+    let start = self.state.position();
+    let children = self.parse_children(true)?;
+    let end = self.state.position();
+    Ok(Root {
+      children,
+      start,
+      end,
+    })
+  }
+
   /// 解析一系列节点，直到遇到结束标签或文件结束
-  fn parse_children(&mut self) -> PResult<Vec<Node>> {
+  fn parse_children(&mut self, is_root: bool) -> PResult<Vec<Node>> {
     let mut children = vec![];
     while self.state.peek().is_some() {
+      if let Some(['<', '/']) = self.state.peek_n() {
+        break;
+      }
       children.push(self.parse_node()?);
     }
 
     Ok(children)
-  }
-
-  /// 检查当前位置是否是一个结束标签 </xxx>
-  fn is_closing_tag(&mut self) -> bool {
-    // 保存当前状态
-    let current_state = self.state.clone();
-
-    // 检查是否是结束标签
-    let is_closing = self.state.eat('<') && self.state.eat('/');
-
-    // 恢复状态
-    self.state = current_state;
-
-    is_closing
   }
 
   /// 解析单个节点
@@ -65,13 +65,12 @@ impl<'s> Parser<'s> {
           return Err(self.state.add_error(SyntaxErrorKind::ExpectComment));
         }
       }
-      Some(['<', '/']) => {
-        return Err(self.state.add_error(SyntaxErrorKind::ExpectCloseTag));
-      }
       Some(['<', ch]) => {
         if is_tag_name_char(ch) {
           // 正常的开始标签
           return self.parse_element();
+        } else if ch == '/' {
+          return Err(self.state.add_error(SyntaxErrorKind::ExpectElement));
         } else {
           return Err(self.state.add_error(SyntaxErrorKind::ExpectElement));
         }
@@ -117,7 +116,7 @@ impl<'s> Parser<'s> {
       }
 
       // 解析子节点
-      children = self.parse_children()?;
+      children = self.parse_children(false)?;
 
       // 解析结束标签
       self.parse_closing_tag(&name)?;
@@ -199,7 +198,7 @@ impl<'s> Parser<'s> {
     }
 
     // 跳过空格
-    self.state.skip_whitespace();
+    // self.state.skip_whitespace();
 
     // 检查是否有属性值
     let value = if self.state.next_if('=') {
@@ -231,8 +230,6 @@ impl<'s> Parser<'s> {
     let mut values = Vec::new();
     // 如果有引号，解析引号内的内容
     if let Some(quote) = quote {
-      self.state.next();
-
       loop {
         if self.state.next_if(quote) {
           break;
@@ -252,8 +249,12 @@ impl<'s> Parser<'s> {
           }
           _ => {
             let value_start = self.state.position();
-            let text = self.state.consume_until(vec!["{{", "quote"]);
+            println!("value_start: {}", self.state.current_str());
+            let text = self
+              .state
+              .consume_until(vec!["{{", quote.to_string().as_str()]);
             let value_end = self.state.position();
+            println!("value_end: {}", self.state.current_str());
             values.push(AttributeValue::Text {
               content: text.to_string(),
               start: value_start,

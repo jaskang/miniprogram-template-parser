@@ -97,7 +97,7 @@ impl<'s> ParseState<'s> {
   pub fn next(&mut self) -> Option<(usize, char)> {
     match self.chars.next() {
       Some((offset, ch)) => {
-        self.offset = offset;
+        self.offset = offset + 1;
         self.index += ch.len_utf8();
         if ch == '\n' {
           self.line += 1;
@@ -105,6 +105,15 @@ impl<'s> ParseState<'s> {
         } else {
           self.column += 1;
         }
+        // println!(
+        //   "next: {} {} {} {} {} str: {}",
+        //   ch,
+        //   self.index,
+        //   self.offset,
+        //   self.line,
+        //   self.column,
+        //   self.current_str()
+        // );
         Some((offset, ch))
       }
       None => None,
