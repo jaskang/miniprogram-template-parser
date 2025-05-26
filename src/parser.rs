@@ -39,10 +39,20 @@ impl<'s> Parser<'s> {
     })
   }
 
+  fn match_tag_end(&self) -> Option<&str> {
+    match self.state.peek_n() {
+      Some(['<', '/']) => {
+        self.state.next_n(2);
+        Some(self.parse_tag_name()?)
+      }
+      _ => None,
+    }
+  }
+
   /// 解析一系列节点，直到遇到结束标签或文件结束
   fn parse_children(&mut self, is_root: bool) -> PResult<Vec<Node>> {
     let mut children = vec![];
-    while self.state.peek().is_some() {
+    while !self.state.is_end() {
       if let Some(['<', '/']) = self.state.peek_n() {
         break;
       }
@@ -62,7 +72,7 @@ impl<'s> Parser<'s> {
         if let Some(['<', '!', '-', '-']) = self.state.peek_n() {
           return self.parse_comment();
         } else {
-          return Err(self.state.add_error(SyntaxErrorKind::ExpectComment));
+          return Err(self.state.emit_error(SyntaxErrorKind::ExpectComment));
         }
       }
       Some(['<', ch]) => {
@@ -70,9 +80,9 @@ impl<'s> Parser<'s> {
           // 正常的开始标签
           return self.parse_element();
         } else if ch == '/' {
-          return Err(self.state.add_error(SyntaxErrorKind::ExpectElement));
+          return Err(self.state.emit_error(SyntaxErrorKind::ExpectElement));
         } else {
-          return Err(self.state.add_error(SyntaxErrorKind::ExpectElement));
+          return Err(self.state.emit_error(SyntaxErrorKind::ExpectElement));
         }
       }
       Some(['{', '{']) => {
@@ -85,7 +95,7 @@ impl<'s> Parser<'s> {
       }
       None => {
         // 到达文件尾部
-        return Err(self.state.add_error(SyntaxErrorKind::ExpectTextNode));
+        return Err(self.state.emit_error(SyntaxErrorKind::ExpectTextNode));
       }
     }
   }
@@ -112,7 +122,7 @@ impl<'s> Parser<'s> {
     if !self_closing {
       // 消费结束 >
       if !self.state.next_if('>') {
-        return Err(self.state.add_error(SyntaxErrorKind::ExpectElement));
+        return Err(self.state.emit_error(SyntaxErrorKind::ExpectElement));
       }
 
       // 解析子节点
@@ -138,10 +148,10 @@ impl<'s> Parser<'s> {
 
   /// 解析标签名
   fn parse_tag_name(&mut self) -> PResult<&'s str> {
-    let name = self.state.consume_while(|c| is_tag_name_char(c));
+    let name = self.state.next_while(|c| is_tag_name_char(c));
 
     if name.is_empty() {
-      return Err(self.state.add_error(SyntaxErrorKind::ExpectTagName));
+      return Err(self.state.emit_error(SyntaxErrorKind::ExpectTagName));
     }
 
     Ok(name)
@@ -194,7 +204,7 @@ impl<'s> Parser<'s> {
     let name = self.state.consume_while(|c| is_attr_name_char(c));
 
     if name.is_empty() {
-      return Err(self.state.add_error(SyntaxErrorKind::ExpectAttrName));
+      return Err(self.state.emit_error(SyntaxErrorKind::ExpectAttrName));
     }
 
     // 跳过空格
@@ -262,7 +272,7 @@ impl<'s> Parser<'s> {
         }
       }
     } else {
-      return Err(self.state.add_error(SyntaxErrorKind::ExpectAttrValue));
+      return Err(self.state.emit_error(SyntaxErrorKind::ExpectAttrValue));
     }
 
     if values.is_empty() {
@@ -282,7 +292,7 @@ impl<'s> Parser<'s> {
     // 查找和解析结束标签
     loop {
       if self.state.is_eof() {
-        return Err(self.state.add_error(SyntaxErrorKind::ExpectCloseTag));
+        return Err(self.state.emit_error(SyntaxErrorKind::ExpectCloseTag));
       }
 
       if self.state.next_if('<') && self.state.next_if('/') {
@@ -298,7 +308,7 @@ impl<'s> Parser<'s> {
 
     // 检查标签名是否匹配
     if name != expected_name {
-      return Err(self.state.add_error(SyntaxErrorKind::ExpectCloseTag));
+      return Err(self.state.emit_error(SyntaxErrorKind::ExpectCloseTag));
     }
 
     // 跳过空格
@@ -306,7 +316,7 @@ impl<'s> Parser<'s> {
 
     // 检查结束标签是否正确关闭
     if !self.state.next_if('>') {
-      return Err(self.state.add_error(SyntaxErrorKind::ExpectCloseTag));
+      return Err(self.state.emit_error(SyntaxErrorKind::ExpectCloseTag));
     }
 
     Ok(())
@@ -319,7 +329,7 @@ impl<'s> Parser<'s> {
     let content = str.to_string();
     // 如果文本内容为空，返回错误
     if content.is_empty() {
-      return Err(self.state.add_error(SyntaxErrorKind::ExpectTextNode));
+      return Err(self.state.emit_error(SyntaxErrorKind::ExpectTextNode));
     }
 
     let end = self.state.position();
@@ -338,7 +348,7 @@ impl<'s> Parser<'s> {
     let content = str.to_string();
     // 如果文本内容为空，返回错误
     if content.is_empty() {
-      return Err(self.state.add_error(SyntaxErrorKind::ExpectTextNode));
+      return Err(self.state.emit_error(SyntaxErrorKind::ExpectTextNode));
     }
 
     let end = self.state.position();
@@ -356,7 +366,7 @@ impl<'s> Parser<'s> {
 
     // 消费 {{
     if !self.state.next_if('{') || !self.state.next_if('{') {
-      return Err(self.state.add_error(SyntaxErrorKind::ExpectExpression));
+      return Err(self.state.emit_error(SyntaxErrorKind::ExpectExpression));
     }
 
     // 跳过表达式开始处的空白

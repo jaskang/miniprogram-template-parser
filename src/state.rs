@@ -38,8 +38,7 @@ impl<'s> ParseState<'s> {
     }
   }
 
-  /// 记录语法错误
-  pub fn add_error(&mut self, kind: SyntaxErrorKind) -> SyntaxError {
+  pub fn emit_error(&mut self, kind: SyntaxErrorKind) -> SyntaxError {
     let position = self.position();
     let error = SyntaxError {
       kind,
@@ -51,7 +50,6 @@ impl<'s> ParseState<'s> {
     error
   }
 
-  /// 获取所有收集到的错误
   pub fn errors(&self) -> &[SyntaxError] {
     &self.errors
   }
@@ -70,16 +68,14 @@ impl<'s> ParseState<'s> {
   }
 
   /// 检查是否到达输入末尾
-  pub fn is_eof(&mut self) -> bool {
+  pub fn is_end(&mut self) -> bool {
     self.peek().is_none()
   }
 
-  /// 查看下一个字符，但不消费它
   pub fn peek(&mut self) -> Option<char> {
     self.chars.peek().map(|(_, c)| *c)
   }
 
-  // 查看接下来N个字符，但不消费它们
   pub fn peek_n<const N: usize>(&mut self) -> Option<[char; N]> {
     let mut chars = self.chars.clone();
     let mut result = ['\x00'; N];
@@ -105,19 +101,24 @@ impl<'s> ParseState<'s> {
         } else {
           self.column += 1;
         }
-        // println!(
-        //   "next: {} {} {} {} {} str: {}",
-        //   ch,
-        //   self.index,
-        //   self.offset,
-        //   self.line,
-        //   self.column,
-        //   self.current_str()
-        // );
         Some((offset, ch))
       }
       None => None,
     }
+  }
+
+  /// 判断是否可以匹配指定的字符，如果能则消费它
+  pub fn next_if<F>(&mut self, predicate: F) -> bool
+  where
+    F: Fn(char, &str) -> bool,
+  {
+    if let Some(ch) = self.peek() {
+      if predicate(ch, self.current_str()) {
+        self.next();
+        return true;
+      }
+    }
+    false
   }
 
   pub fn next_n(&mut self, n: usize) -> &'s str {
@@ -128,26 +129,15 @@ impl<'s> ParseState<'s> {
     &self.source[start..self.index]
   }
 
-  /// 判断是否可以匹配指定的字符，如果能则消费它
-  pub fn next_if(&mut self, c: char) -> bool {
-    if let Some(ch) = self.peek() {
-      if ch == c {
-        self.next();
-        return true;
-      }
-    }
-    false
-  }
-
   /// 消费字符直到不满足条件
-  pub fn consume_while<F>(&mut self, predicate: F) -> &'s str
+  pub fn next_while<F>(&mut self, predicate: F) -> &'s str
   where
-    F: Fn(char) -> bool,
+    F: Fn(char, &str) -> bool,
   {
     let start = self.index;
     loop {
       if let Some(ch) = self.peek() {
-        if predicate(ch) {
+        if predicate(ch, self.current_str()) {
           self.next();
         } else {
           break;
@@ -160,16 +150,11 @@ impl<'s> ParseState<'s> {
   }
 
   /// 消费字符直到遇到目标字符串
-  pub fn consume_until(&mut self, targets: Vec<&str>) -> &'s str {
-    let start = self.index;
-    loop {
-      let current_str = self.current_str();
-      if targets.iter().any(|target| current_str.starts_with(target)) {
-        break;
-      }
-      self.next();
-    }
-    &self.source[start..self.index]
+  pub fn next_until<F>(&mut self, predicate: F) -> &'s str
+  where
+    F: Fn(char, &str) -> bool,
+  {
+    self.next_while(|c, s| !predicate(c, s))
   }
 
   /// 跳过空白字符
