@@ -1,8 +1,8 @@
 import {
-  instantiateNapiModuleSync as __emnapiInstantiateNapiModuleSync,
-  getDefaultContext as __emnapiGetDefaultContext,
-  WASI as __WASI,
   createOnMessage as __wasmCreateOnMessageForFsProxy,
+  getDefaultContext as __emnapiGetDefaultContext,
+  instantiateNapiModuleSync as __emnapiInstantiateNapiModuleSync,
+  WASI as __WASI,
 } from '@napi-rs/wasm-runtime'
 
 import __wasmUrl from './miniprogram-template-parser.wasm32-wasi.wasm?url'
@@ -53,5 +53,6 @@ const {
     }
   },
 })
+export default __napiModule.exports
 export const parse = __napiModule.exports.parse
 export const SyntaxErrorKind = __napiModule.exports.SyntaxErrorKind

@@ -11,6 +11,12 @@ export type AttributeValue =
   | { type: 'Text', content: string, start: Position, end: Position }
   | { type: 'Expression', content: string, start: Position, end: Position }
 
+export interface Expression {
+  content: string
+  start: Position
+  end: Position
+}
+
 /** AST节点类型，代表WXML文档中的各种元素 */
 export type Node =
   | { type: 'Element', name: string, attrs: Array<Attribute>, children: Array<Node>, selfClosing: boolean, firstAttrSameLine: boolean, start: Position, end: Position }
