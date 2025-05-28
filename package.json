@@ -1,6 +1,6 @@
 {
   "name": "miniprogram-template-parser",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Template project for writing node package with napi-rs",
   "main": "index.js",
   "type": "module",
