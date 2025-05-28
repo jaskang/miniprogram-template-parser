@@ -1,10 +1,10 @@
 /// 判断是否为模板中的空白字符
-pub(crate) fn is_template_whitespace(c: char) -> bool {
-  match c {
-    ' ' | '\t' | '\n' | '\r' => true,
-    _ => false,
-  }
-}
+// pub(crate) fn is_template_whitespace(c: char) -> bool {
+//   match c {
+//     ' ' | '\t' | '\n' | '\r' => true,
+//     _ => false,
+//   }
+// }
 
 /// 判断是否为标签名允许的字符
 pub(crate) fn is_tag_name_char(c: char) -> bool {

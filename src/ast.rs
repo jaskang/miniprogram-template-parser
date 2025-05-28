@@ -73,6 +73,14 @@ pub enum AttributeValue {
   },
 }
 
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct Expression {
+  pub content: String,
+  pub start: Position,
+  pub end: Position,
+}
+
 /// AST节点类型，代表WXML文档中的各种元素
 #[derive(Debug, Clone)]
 #[napi]
